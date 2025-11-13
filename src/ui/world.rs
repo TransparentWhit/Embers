@@ -1,7 +1,6 @@
-use crate::GameState;
+use crate::{GameState};
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use crate::world::entity::Health;
 use crate::world::entity::player::Player;
 
 #[derive(Component)]
@@ -60,13 +59,12 @@ fn init(
             (
                 Mesh3d(meshes.add(Cylinder { radius: 0.5, half_height: 0.85 }.mesh())),
                 MeshMaterial3d(materials.add(Color::srgb(0.3, 0.5, 0.3))),
-                Health(1.),
                 Player,
                 RigidBody::Dynamic,
                 Collider::cylinder(0.5, 1.7),
                 Transform::from_xyz(0.0, 1.0, 0.0),
                 LinearVelocity::from(Vec3::new(0., 10., 0.)),
-            )
+            ),
         ],
     ));
 }

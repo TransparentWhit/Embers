@@ -1,5 +1,6 @@
 mod ui;
 pub mod world;
+mod utils;
 
 use avian3d::PhysicsPlugins;
 use bevy::DefaultPlugins;
