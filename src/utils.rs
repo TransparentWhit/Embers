@@ -1,5 +1,35 @@
 use std::fmt;
 use bevy::asset::uuid::Uuid;
+use bevy::prelude::*;
+
+#[macro_export]
+macro_rules! identify {
+    ($identified: ty, $identifier: ident) => {
+        impl core::cmp::PartialEq for $identified {
+            fn eq(&self, other: &Self) -> bool {
+                self.$identifier() == other.$identifier()
+            }
+        }
+        impl core::cmp::Eq for $identified {}
+        impl std::hash::Hash for $identified {
+            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                self.$identifier().hash(state);
+            }
+        }
+    };
+}
+#[macro_export]
+macro_rules! uniquely_identify {
+    ($uniquely_identified: ty) => {
+        $crate::identify!($uniquely_identified, unique_id);
+    };
+}
+#[macro_export]
+macro_rules! key_identify {
+    ($key_identified: ty) => {
+        $crate::identify!($key_identified, key);
+    };
+}
 
 pub trait Named {
     fn name(&self) -> &str;
@@ -14,7 +44,7 @@ pub trait Keyed {
     fn key(&self) -> &NamespacedKey;
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Component, Clone, Debug, Eq, Hash, PartialEq)]
 pub struct NamespacedKey {
     namespaced_key: String,
     separator_index: usize,

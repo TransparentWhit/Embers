@@ -1,7 +1,9 @@
-use crate::{GameState};
+
+use crate::GameState;
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use crate::world::entity::player::Player;
+use bevy::camera::ScalingMode;
+use crate::world::entity::living::player::Player;
 
 #[derive(Component)]
 struct Ground;
@@ -27,6 +29,7 @@ fn init(
         DespawnOnExit(GameState::World),
         Transform::default(),
         Node {
+            aspect_ratio: Some(9. / 16.),
             width: Val::Percent(100f32),
             height: Val::Percent(100f32),
             justify_content: JustifyContent::Center,
@@ -36,6 +39,13 @@ fn init(
         children![
             (
                 Camera3d::default(),
+                Projection::from(OrthographicProjection {
+                    scaling_mode: ScalingMode::Fixed {
+                        width: 16f32,
+                        height: 9f32
+                    },
+                    ..OrthographicProjection::default_3d()
+                }),
                 Transform::from_xyz(15.0, 5.0, 15.0).looking_at(Vec3::ZERO, Vec3::Y),
                 IsometricCamera {
                     distance: 12.0,
@@ -59,7 +69,11 @@ fn init(
             (
                 Mesh3d(meshes.add(Cylinder { radius: 0.5, half_height: 0.85 }.mesh())),
                 MeshMaterial3d(materials.add(Color::srgb(0.3, 0.5, 0.3))),
-                Player,
+                Player {
+                    flops: 0,
+                    hashes: 0,
+                    time_crystals: 0,
+                },
                 RigidBody::Dynamic,
                 Collider::cylinder(0.5, 1.7),
                 Transform::from_xyz(0.0, 1.0, 0.0),

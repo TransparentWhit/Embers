@@ -1,7 +1,10 @@
-#[macro_export]
-macro_rules! projectile {
-    [$($extra: expr),* $(,)?] => {$crate::entity![
-        avian3d::dynamics::rigid_body::RigidBody::Dynamic
-        $(, $extra)*
-    ]};
+use avian3d::prelude::RigidBody;
+use bevy::prelude::*;
+use crate::world::entity::entity;
+
+#[derive(Component)]
+struct Projectile {}
+
+pub fn projectile() -> impl Bundle {
+    (entity(), Projectile {}, RigidBody::Dynamic)
 }
