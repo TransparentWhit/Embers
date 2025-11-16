@@ -1,6 +1,6 @@
 use avian3d::prelude::RigidBody;
 use bevy::prelude::*;
-use crate::world::entity::entity;
+use super::entity;
 
 #[derive(Component)]
 struct Projectile {}

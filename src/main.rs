@@ -4,19 +4,20 @@ mod utils;
 
 use avian3d::PhysicsPlugins;
 use bevy::DefaultPlugins;
-use bevy::asset::uuid::Uuid;
 use bevy::prelude::*;
-
-#[derive(Component)]
-struct UUID(Uuid);
 
 #[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 enum GameState {
     #[default]
+    Loading,
     MainMenu,
     World,
 }
 
+// TODO: The initial loading logic is a bit messy. Someone refactor it later
+// asset.rs initiates global asset loading at StartUp,
+// when it completes it sends a message which gets received by loading_screen.rs,
+// then somehow correctly switches to main screen because GameState and Loading happen to be in the correct default states
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(AssetPlugin {
@@ -24,8 +25,10 @@ fn main() {
             ..default()
         }))
         .add_plugins(PhysicsPlugins::default())
+        .add_plugins(ui::loading_screen::loading_screen_plugin)
         .add_plugins(ui::main_menu::main_menu_plugin)
         .add_plugins(ui::world::world_plugin)
+        .add_plugins(utils::assets::assets_plugin)
         /*.add_systems(Startup, |
             primary_window: Single<Entity, With<PrimaryWindow>>,
             asset_server: Res<AssetServer>,

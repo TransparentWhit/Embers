@@ -10,6 +10,8 @@ dependencies = [
  "bevy",
  "image",
  "rand",
+ "regex",
+ "thiserror 2.0.17",
  "winit",
 ]
 

@@ -23,4 +23,6 @@ bevy = { version = "0.17", features = ["dynamic_linking"] }
 avian3d = "0.4"
 winit = { version = "0.30", default-features = false }
 image = { version = "0.25", default-features = false }
+regex = "1.12"
 rand = "0.9"
+thiserror = "2.0"

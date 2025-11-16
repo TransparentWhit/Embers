@@ -1,5 +1,6 @@
 pub mod projectile;
 pub mod living;
+pub mod tnt;
 
 use bevy::prelude::*;
 

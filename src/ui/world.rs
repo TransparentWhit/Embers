@@ -5,6 +5,14 @@ use bevy::prelude::*;
 use bevy::camera::ScalingMode;
 use crate::world::entity::living::player::Player;
 
+#[derive(States, Clone, Copy, Default, Eq, PartialEq, Debug, Hash)]
+enum WorldState {
+    Main,
+    Options,
+    #[default]
+    Disabled,
+}
+
 #[derive(Component)]
 struct Ground;
 
@@ -22,6 +30,7 @@ struct PlayerCamera;
 
 fn init(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -78,6 +87,14 @@ fn init(
                 Collider::cylinder(0.5, 1.7),
                 Transform::from_xyz(0.0, 1.0, 0.0),
                 LinearVelocity::from(Vec3::new(0., 10., 0.)),
+            ),
+            (
+                SceneRoot(asset_server.load(
+                    GltfAssetLabel::Scene(0).from_asset("global/models/entities/embers/tnt.glb"),
+                )),
+                RigidBody::Dynamic,
+                Collider::cuboid(1.0, 1.0, 1.0),
+                Transform::from_xyz(0.0, 0.5, 0.0),
             ),
         ],
     ));

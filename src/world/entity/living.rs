@@ -6,7 +6,7 @@ use avian3d::prelude::RigidBody;
 use bevy::prelude::*;
 use crate::key_identify;
 use crate::utils::{Keyed, NamespacedKey};
-use crate::world::entity::entity;
+use super::entity;
 
 #[derive(Component)]
 pub struct LivingEntity {

@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 use avian3d::prelude::Collider;
 use bevy::prelude::*;
 use crate::utils::NamespacedKey;
-use crate::world::entity::living::living_entity;
+use super::living_entity;
 
 fn process_input(keys: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButton>>) {
     mouse.pressed(MouseButton::Left);
