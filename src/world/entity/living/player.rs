@@ -1,17 +1,16 @@
-use std::collections::HashMap;
-use std::sync::LazyLock;
+use super::living_entity;
+use crate::utils::NamespacedKey;
 use avian3d::prelude::Collider;
 use bevy::prelude::*;
-use crate::utils::NamespacedKey;
-use super::living_entity;
+use std::collections::HashMap;
+use std::sync::LazyLock;
 
 fn process_input(keys: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButton>>) {
     mouse.pressed(MouseButton::Left);
 }
 
-static ATTRIBUTES: LazyLock<HashMap<NamespacedKey, f32>> = LazyLock::new(|| {HashMap::from([
-    (NamespacedKey::new("embers", "max_health"), 20f32),
-])});
+static ATTRIBUTES: LazyLock<HashMap<NamespacedKey, f32>> =
+    LazyLock::new(|| HashMap::from([(NamespacedKey::new("embers", "max_health"), 20f32)]));
 static HITBOX: LazyLock<Collider> = LazyLock::new(|| Collider::cylinder(0.5, 1.7));
 
 #[derive(Component)]

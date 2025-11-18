@@ -1,11 +1,11 @@
 pub mod assets;
 
-use std::fmt;
-use std::result::Result;
-use std::sync::LazyLock;
 use bevy::asset::uuid::Uuid;
 use bevy::prelude::*;
 use regex::Regex;
+use std::fmt;
+use std::result::Result;
+use std::sync::LazyLock;
 use thiserror::Error;
 
 #[macro_export]
@@ -50,6 +50,12 @@ pub trait Keyed {
     fn key(&self) -> &NamespacedKey;
 }
 
+impl<T> Keyed for (NamespacedKey, T) {
+    fn key(&self) -> &NamespacedKey {
+        &self.0
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum IllegalNamespacedKeyError {
     #[error("Invalid namespace: {namespace}")]
@@ -66,21 +72,36 @@ pub struct NamespacedKey {
     separator_index: usize,
 }
 pub static NAMESPACE_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\w+)$").unwrap());
-pub static KEY_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\w+)$").unwrap());
-pub static NAMESPACED_KEY_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(&format!(r"^(?P<namespace>\w+){}(?P<key>\w+)$", NamespacedKey::SEPARATOR)).unwrap());
+pub static KEY_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^([\w/]+)$").unwrap());
+pub static NAMESPACED_KEY_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r"^(?P<namespace>\w+){}(?P<key>[\w/]+)$",
+        NamespacedKey::SEPARATOR
+    ))
+    .unwrap()
+});
 impl NamespacedKey {
     pub const SEPARATOR: &'static str = ":";
     const SEPARATOR_LEN: usize = Self::SEPARATOR.len();
     pub(crate) const EMBERS_NAMESPACE: &'static str = "embers";
     fn new_internal(namespace: &str, key: &str) -> Self {
         Self {
-            namespaced_key: format!("{}{separator}{}", namespace, key, separator = Self::SEPARATOR),
+            namespaced_key: format!(
+                "{}{separator}{}",
+                namespace,
+                key,
+                separator = Self::SEPARATOR
+            ),
             separator_index: namespace.len(),
         }
     }
     pub fn new<'a, 'b>(namespace: impl Into<&'a str>, key: impl Into<&'b str>) -> Self {
         let namespace = namespace.into();
-        assert!(NAMESPACE_PATTERN.is_match(namespace), "Invalid namespace: {}", namespace);
+        assert!(
+            NAMESPACE_PATTERN.is_match(namespace),
+            "Invalid namespace: {}",
+            namespace
+        );
         let key = key.into();
         assert!(KEY_PATTERN.is_match(key), "Invalid key: {}", key);
         Self::new_internal(namespace, key)
@@ -93,27 +114,39 @@ impl NamespacedKey {
     pub(crate) fn new_embers(key: &str) -> Self {
         Self::new(Self::EMBERS_NAMESPACE, key)
     }
-    pub fn try_from_with<'a, 'b>(value: impl Into<&'a str>, default_namespace: impl Into<&'b str>) -> Result<Self, IllegalNamespacedKeyError> {
+    pub fn try_from_with<'a, 'b>(
+        value: impl Into<&'a str>,
+        default_namespace: impl Into<&'b str>,
+    ) -> Result<Self, IllegalNamespacedKeyError> {
         let value = value.into();
         let namespaced = Self::try_from(value);
-        if (namespaced.is_ok()) {
+        if namespaced.is_ok() {
             return namespaced;
         }
-        if (!KEY_PATTERN.is_match(value)) {
-            return Err(IllegalNamespacedKeyError::IllegalKeyError { key: value.to_string() });
+        if !KEY_PATTERN.is_match(value) {
+            return Err(IllegalNamespacedKeyError::IllegalKeyError {
+                key: value.to_string(),
+            });
         }
         let default_namespace = default_namespace.into();
-        if (!NAMESPACE_PATTERN.is_match(default_namespace)) {
-            return Err(IllegalNamespacedKeyError::IllegalNamespaceError { namespace: default_namespace.to_string() });
+        if !NAMESPACE_PATTERN.is_match(default_namespace) {
+            return Err(IllegalNamespacedKeyError::IllegalNamespaceError {
+                namespace: default_namespace.to_string(),
+            });
         }
         Ok(Self::new_internal(default_namespace, value))
     }
     #[inline]
-    pub fn try_from_with_namespaced<'a>(value: impl Into<&'a str>, default_namespace: &impl Namespaced) -> Result<Self, IllegalNamespacedKeyError> {
+    pub fn try_from_with_namespaced<'a>(
+        value: impl Into<&'a str>,
+        default_namespace: &impl Namespaced,
+    ) -> Result<Self, IllegalNamespacedKeyError> {
         Self::try_from_with(value, default_namespace.namespace())
     }
     #[inline]
-    pub(crate) fn try_from_with_embers<'a>(value: impl Into<&'a str>) -> Result<Self, IllegalNamespacedKeyError> {
+    pub(crate) fn try_from_with_embers<'a>(
+        value: impl Into<&'a str>,
+    ) -> Result<Self, IllegalNamespacedKeyError> {
         Self::try_from_with(value, Self::EMBERS_NAMESPACE)
     }
     pub fn key(&self) -> &str {
@@ -140,7 +173,9 @@ impl TryFrom<&str> for NamespacedKey {
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match NAMESPACED_KEY_PATTERN.captures(value) {
             Some(captures) => Ok(Self::new_internal(&captures["namespace"], &captures["key"])),
-            None => Err(IllegalNamespacedKeyError::IllegalNamespacedKeyError { namespaced_key: value.to_string() }),
+            None => Err(IllegalNamespacedKeyError::IllegalNamespacedKeyError {
+                namespaced_key: value.to_string(),
+            }),
         }
     }
 }

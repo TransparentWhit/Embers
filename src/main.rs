@@ -1,10 +1,13 @@
 mod ui;
+pub mod utils;
 pub mod world;
-mod utils;
 
 use avian3d::PhysicsPlugins;
 use bevy::DefaultPlugins;
 use bevy::prelude::*;
+use bevy::winit::WINIT_WINDOWS;
+use std::path::MAIN_SEPARATOR;
+use winit::window::Icon;
 
 #[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 enum GameState {
@@ -21,39 +24,39 @@ enum GameState {
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(AssetPlugin {
-            file_path: "res/assets".to_string(),
+            file_path: format!("res{}assets", MAIN_SEPARATOR),
             ..default()
         }))
         .add_plugins(PhysicsPlugins::default())
-        .add_plugins(ui::loading_screen::loading_screen_plugin)
-        .add_plugins(ui::main_menu::main_menu_plugin)
-        .add_plugins(ui::world::world_plugin)
+        .add_plugins(ui::plugin)
         .add_plugins(utils::assets::assets_plugin)
-        /*.add_systems(Startup, |
-            primary_window: Single<Entity, With<PrimaryWindow>>,
-            asset_server: Res<AssetServer>,
-            mut windows: NonSend<WinitWindows>,
-        | {
-            let icon_path = "icon.png";
-            let icon_handle: Handle<Image> = asset_server.load(icon_path);
-            let window_entity = primary_window.into_inner();
-            if let Some(window) = windows.get_window(window_entity) {
-                if let Ok(crate_root) = std::env::current_dir() {
-                    let icon_path = crate_root.join("res/assets/icon.png");
-                    if let Ok(icon_file) = std::fs::File::open(&icon_path) {
-                        let reader = std::io::BufReader::new(icon_file);
-                        if let Ok(image) = image::load(icon_handle., image::ImageFormat::Png) {
-                            let image = image.into_rgba8();
-                            let (width, height) = image.dimensions();
-                            let rgba_data = image.into_raw();
-                            if let Ok(icon) = Icon::from_rgba(rgba_data, width, height) {
-                                window.set_window_icon(Some(icon));
+        .add_plugins(world::plugin)
+        .add_systems(
+            Startup,
+            |asset_images: Res<Assets<Image>>,
+             asset_server: Res<AssetServer>,
+             mut windows: Query<(Entity, &mut Window)>| {
+                WINIT_WINDOWS.with_borrow(|winit_windows| {
+                    for (window_entity, mut window) in windows.iter_mut() {
+                        window.visible = true;
+                        if let Some(winit_window) = winit_windows.get_window(window_entity) {
+                            if let Some(window_icon) =
+                                asset_images.get(&asset_server.load("global/icon.png"))
+                            {
+                                winit_window.set_window_icon(
+                                    Icon::from_rgba(
+                                        window_icon.data.clone().unwrap(),
+                                        window_icon.width(),
+                                        window_icon.height(),
+                                    )
+                                    .ok(),
+                                );
                             }
                         }
                     }
-                }
-            }
-        })*/
+                });
+            },
+        )
         .init_state::<GameState>()
         .run();
 }

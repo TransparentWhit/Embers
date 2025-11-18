@@ -1,8 +1,8 @@
+use crate::GameState;
+use crate::utils::assets::AssetLoadedMessage;
 use bevy::app::App;
 use bevy::color::palettes::css::YELLOW;
 use bevy::prelude::*;
-use crate::GameState;
-use crate::utils::assets::AssetLoadedMessage;
 
 #[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 pub enum Loading {
@@ -39,13 +39,11 @@ fn init(mut commands: Commands) {
                 align_items: AlignItems::Center,
                 ..default()
             },
-            children![
-                (
-                    Text::new("Loading..."),
-                    TextFont { ..default() },
-                    TextColor(YELLOW.into())
-                ),
-            ]
+            children![(
+                Text::new("Loading..."),
+                TextFont { ..default() },
+                TextColor(YELLOW.into())
+            ),]
         )],
     ));
 }
@@ -62,11 +60,9 @@ fn asset_loaded_listener(
 
 fn fina() {}
 
-pub fn loading_screen_plugin(app: &mut App) {
-    app
-        .init_state::<Loading>()
+pub(super) fn plugin(app: &mut App) {
+    app.init_state::<Loading>()
         .add_systems(OnEnter(GameState::Loading), init)
         .add_systems(Update, asset_loaded_listener)
-        .add_systems(OnExit(GameState::Loading), fina)
-    ;
+        .add_systems(OnExit(GameState::Loading), fina);
 }

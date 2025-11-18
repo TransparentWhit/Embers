@@ -32,3 +32,7 @@ macro_rules! ui_button {
         )
     };
 }
+
+pub(super) fn plugin(app: &mut App) {
+    app.add_plugins((loading_screen::plugin, main_menu::plugin, world::plugin));
+}

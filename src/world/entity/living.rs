@@ -1,30 +1,18 @@
 pub mod creeper;
 pub mod player;
 
-use std::collections::{HashMap, HashSet};
-use avian3d::prelude::RigidBody;
-use bevy::prelude::*;
+use super::entity;
 use crate::key_identify;
 use crate::utils::{Keyed, NamespacedKey};
-use super::entity;
+use avian3d::prelude::RigidBody;
+use bevy::prelude::*;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Component)]
-pub struct LivingEntity {
-    pub health: f32,
-    pub attributes: HashMap<NamespacedKey, AttributeInstance>,
-}
-impl LivingEntity {
-    fn new(attributes: &HashMap<NamespacedKey, f32>) -> Self {
-        Self {
-            health: *attributes.get(&NamespacedKey::new("embers", "max_health")).unwrap_or(&0f32),
-            attributes: attributes.iter().map(|(key, base)| (key.clone(), AttributeInstance {
-                key: key.clone(),
-                base: *base,
-                modifiers: Default::default(),
-            })).collect(),
-        }
-    }
-}
+pub struct Health(pub f32);
+
+#[derive(Component)]
+pub struct Attributes(pub HashMap<NamespacedKey, AttributeInstance>);
 
 #[derive(Component)]
 pub struct AttributeInstance {
@@ -39,7 +27,9 @@ impl AttributeInstance {
         for modifier in &self.modifiers {
             match modifier.modification {
                 AttributeModification::AddValue(value) => base += value,
-                AttributeModification::AddMultipliedValue(multipled_value) => multiplier *= 1f32 + multipled_value,
+                AttributeModification::AddMultipliedValue(multipled_value) => {
+                    multiplier *= 1f32 + multipled_value
+                }
             }
         }
         base * multiplier
@@ -81,7 +71,26 @@ pub enum AttributeModification {
 pub fn living_entity(attributes: &HashMap<NamespacedKey, f32>) -> impl Bundle {
     (
         entity(),
-        LivingEntity::new(attributes),
+        Health(
+            *attributes
+                .get(&NamespacedKey::new("embers", "max_health"))
+                .unwrap_or(&0f32),
+        ),
+        Attributes(
+            attributes
+                .iter()
+                .map(|(key, base)| {
+                    (
+                        key.clone(),
+                        AttributeInstance {
+                            key: key.clone(),
+                            base: *base,
+                            modifiers: Default::default(),
+                        },
+                    )
+                })
+                .collect(),
+        ),
         RigidBody::Kinematic,
     )
 }

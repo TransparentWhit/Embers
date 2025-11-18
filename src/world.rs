@@ -1,6 +1,9 @@
 pub mod entity;
 
-use bevy::prelude::Component;
+use crate::utils::assets::AssetScope;
+use crate::utils::{Keyed, Namespaced, NamespacedKey};
+use bevy::prelude::*;
+use std::sync::LazyLock;
 
 /// Time of the day, within [0, 1).
 #[derive(Component)]
@@ -9,4 +12,32 @@ impl Default for Time {
     fn default() -> Self {
         Self(0.25)
     }
+}
+
+pub struct World {
+    key: NamespacedKey,
+    asset_scope: AssetScope,
+}
+impl Keyed for World {
+    fn key(&self) -> &NamespacedKey {
+        &self.key
+    }
+}
+impl World {
+    pub fn new(key: NamespacedKey) -> Self {
+        Self {
+            asset_scope: AssetScope::new(format!("world/{}/{}", key.namespace(), key.key())),
+            key,
+        }
+    }
+    pub fn asset_scope(&self) -> &AssetScope {
+        &self.asset_scope
+    }
+}
+
+pub static LOBBY: LazyLock<World> =
+    LazyLock::new(|| World::new(NamespacedKey::new_embers("lobby")));
+
+pub(super) fn plugin(app: &mut App) {
+    app.add_plugins(entity::plugin);
 }

@@ -1,9 +1,10 @@
-
 use crate::GameState;
-use avian3d::prelude::*;
-use bevy::prelude::*;
-use bevy::camera::ScalingMode;
 use crate::world::entity::living::player::Player;
+use crate::world::entity::tnt::tnt;
+use avian3d::prelude::*;
+use bevy::camera::ScalingMode;
+use bevy::post_process::bloom::Bloom;
+use bevy::prelude::*;
 
 #[derive(States, Clone, Copy, Default, Eq, PartialEq, Debug, Hash)]
 enum WorldState {
@@ -48,6 +49,7 @@ fn init(
         children![
             (
                 Camera3d::default(),
+                Bloom::default(),
                 Projection::from(OrthographicProjection {
                     scaling_mode: ScalingMode::Fixed {
                         width: 16f32,
@@ -76,7 +78,15 @@ fn init(
                 Collider::heightfield(vec![vec![0.0, 0.0], vec![0.0, 0.0]], Vec3::splat(20.)),
             ),
             (
-                Mesh3d(meshes.add(Cylinder { radius: 0.5, half_height: 0.85 }.mesh())),
+                Mesh3d(
+                    meshes.add(
+                        Cylinder {
+                            radius: 0.5,
+                            half_height: 0.85
+                        }
+                        .mesh()
+                    )
+                ),
                 MeshMaterial3d(materials.add(Color::srgb(0.3, 0.5, 0.3))),
                 Player {
                     flops: 0,
@@ -88,21 +98,17 @@ fn init(
                 Transform::from_xyz(0.0, 1.0, 0.0),
                 LinearVelocity::from(Vec3::new(0., 10., 0.)),
             ),
-            (
-                SceneRoot(asset_server.load(
-                    GltfAssetLabel::Scene(0).from_asset("global/models/entities/embers/tnt.glb"),
-                )),
-                RigidBody::Dynamic,
-                Collider::cuboid(1.0, 1.0, 1.0),
-                Transform::from_xyz(0.0, 0.5, 0.0),
-            ),
+            (tnt(&asset_server), Transform::from_xyz(0.0, 0.5, 0.0),),
         ],
     ));
 }
 
 fn update_player_camera(
     player_query: Query<&Transform, With<Player>>,
-    mut camera_query: Query<(&mut Transform, &IsometricCamera), (With<PlayerCamera>, With<IsometricCamera>, Without<Player>)>,
+    mut camera_query: Query<
+        (&mut Transform, &IsometricCamera),
+        (With<PlayerCamera>, With<IsometricCamera>, Without<Player>),
+    >,
 ) {
     if let Ok(player_transform) = player_query.single() {
         if let Ok((mut camera_transform, config)) = camera_query.single_mut() {
@@ -113,16 +119,15 @@ fn update_player_camera(
                 config.distance * config.angle.sin(),
             );
             let target_position = player_pos + camera_offset;
-            camera_transform.translation = camera_transform.translation.lerp(
-                target_position,
-                config.follow_speed
-            );
+            camera_transform.translation = camera_transform
+                .translation
+                .lerp(target_position, config.follow_speed);
             camera_transform.look_at(player_pos, Vec3::Y);
         }
     }
 }
 
-pub fn world_plugin(app: &mut App) {
+pub(super) fn plugin(app: &mut App) {
     app.add_systems(OnEnter(GameState::World), init);
     app.add_systems(Update, update_player_camera);
 }

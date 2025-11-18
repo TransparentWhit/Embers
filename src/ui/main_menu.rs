@@ -1,10 +1,11 @@
+use crate::ui::loading_screen::Loading;
 use crate::ui::*;
-use crate::{ui_button, GameState};
+use crate::utils::assets::AssetLoadRequest;
+use crate::world::LOBBY;
+use crate::{GameState, ui_button};
 use bevy::color::palettes::basic::YELLOW;
 use bevy::prelude::*;
 use bevy::sprite::Text2dShadow;
-use crate::ui::loading_screen::Loading;
-use crate::utils::assets::AssetLoadRequest;
 
 #[derive(States, Clone, Copy, Default, Eq, PartialEq, Debug, Hash)]
 enum MainMenuState {
@@ -67,9 +68,7 @@ fn menu_action(
                 MainMenuButton::Play => {
                     loading.set(Loading::World);
                     game_state.set(GameState::Loading);
-                    asset_load_requests.write(AssetLoadRequest::Folder {
-                        path: "world/embers".to_string()
-                    });
+                    asset_load_requests.write(AssetLoadRequest::Scope(LOBBY.asset_scope()));
                     menu_state.set(MainMenuState::Main);
                 }
                 MainMenuButton::Options => menu_state.set(MainMenuState::Options),
@@ -83,11 +82,9 @@ fn menu_action(
 
 fn fina() {}
 
-pub fn main_menu_plugin(app: &mut App) {
-    app
-        .init_state::<MainMenuState>()
+pub(super) fn plugin(app: &mut App) {
+    app.init_state::<MainMenuState>()
         .add_systems(OnEnter(GameState::MainMenu), init)
         .add_systems(Update, menu_action.run_if(in_state(GameState::MainMenu)))
-        .add_systems(OnExit(GameState::MainMenu), fina)
-    ;
+        .add_systems(OnExit(GameState::MainMenu), fina);
 }
