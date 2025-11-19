@@ -6,6 +6,7 @@ use crate::key_identify;
 use crate::utils::{Keyed, NamespacedKey};
 use avian3d::prelude::RigidBody;
 use bevy::prelude::*;
+use bevy_tnua::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Component)]
@@ -92,5 +93,6 @@ pub fn living_entity(attributes: &HashMap<NamespacedKey, f32>) -> impl Bundle {
                 .collect(),
         ),
         RigidBody::Kinematic,
+        TnuaController::default(),
     )
 }

@@ -12,15 +12,11 @@ opt-level = 3
 codegen-units = 1
 lto = "thin"
 
-[target.x86_64-unknown-linux-gnu]
-linker = "clang"
-rustflags = ["-C", "link-arg=-fuse-ld=lld"]
-[target.x86_64-pc-windows-msvc]
-linker = "rust-lld.exe"
-
 [dependencies]
 bevy = { version = "0.17", features = ["dynamic_linking"] }
 avian3d = "0.4"
+bevy-tnua = "0.26"
+bevy-tnua-avian3d = "0.8"
 winit = { version = "0.30", default-features = false }
 image = { version = "0.25", default-features = false }
 regex = "1.12"

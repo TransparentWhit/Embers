@@ -3,9 +3,12 @@ pub mod utils;
 pub mod world;
 
 use avian3d::PhysicsPlugins;
+use avian3d::prelude::PhysicsSchedule;
 use bevy::DefaultPlugins;
 use bevy::prelude::*;
 use bevy::winit::WINIT_WINDOWS;
+use bevy_tnua::prelude::TnuaControllerPlugin;
+use bevy_tnua_avian3d::TnuaAvian3dPlugin;
 use std::path::MAIN_SEPARATOR;
 use winit::window::Icon;
 
@@ -28,6 +31,8 @@ fn main() {
             ..default()
         }))
         .add_plugins(PhysicsPlugins::default())
+        .add_plugins(TnuaControllerPlugin::new(PhysicsSchedule))
+        .add_plugins(TnuaAvian3dPlugin::new(PhysicsSchedule))
         .add_plugins(ui::plugin)
         .add_plugins(utils::assets::assets_plugin)
         .add_plugins(world::plugin)

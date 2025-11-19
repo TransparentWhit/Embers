@@ -5,6 +5,7 @@ use avian3d::prelude::*;
 use bevy::camera::ScalingMode;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
+use bevy_tnua::prelude::*;
 
 #[derive(States, Clone, Copy, Default, Eq, PartialEq, Debug, Hash)]
 enum WorldState {
@@ -95,6 +96,7 @@ fn init(
                 },
                 RigidBody::Dynamic,
                 Collider::cylinder(0.5, 1.7),
+                TnuaController::default(),
                 Transform::from_xyz(0.0, 1.0, 0.0),
                 LinearVelocity::from(Vec3::new(0., 10., 0.)),
             ),
