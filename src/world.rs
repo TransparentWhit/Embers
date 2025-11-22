@@ -1,5 +1,6 @@
 pub mod entity;
 
+use crate::GameState;
 use crate::utils::assets::AssetScope;
 use crate::utils::{Keyed, Namespaced, NamespacedKey};
 use bevy::prelude::*;
@@ -40,4 +41,8 @@ pub static LOBBY: LazyLock<World> =
 
 pub(super) fn plugin(app: &mut App) {
     app.add_plugins(entity::plugin);
+    app.add_systems(
+        Update,
+        entity::living::player::process_input.run_if(in_state(GameState::World)),
+    );
 }
