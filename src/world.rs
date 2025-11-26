@@ -1,4 +1,5 @@
 pub mod entity;
+pub mod item;
 
 use crate::GameState;
 use crate::utils::assets::AssetScope;

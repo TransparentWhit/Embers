@@ -3,12 +3,14 @@ use crate::utils::{Keyed, NamespacedKey};
 use std::collections::HashSet;
 
 pub mod embers {
-    use crate::utils::NamespacedKey;
-    use std::sync::LazyLock;
-    pub static MAX_HEALTH: LazyLock<NamespacedKey> =
-        LazyLock::new(|| NamespacedKey::new_embers("max_health"));
-    pub static MOVEMENT_SPEED: LazyLock<NamespacedKey> =
-        LazyLock::new(|| NamespacedKey::new_embers("movement_speed"));
+    macro_rules! attribute {
+        ($id: ident, $key: expr) => {
+            pub static $id: std::sync::LazyLock<$crate::utils::NamespacedKey> =
+                std::sync::LazyLock::new(|| $crate::utils::NamespacedKey::new_embers($key));
+        };
+    }
+    attribute!(MAX_HEALTH, "max_health");
+    attribute!(MOVEMENT_SPEED, "movement_speed");
 }
 
 pub struct AttributeInstance {

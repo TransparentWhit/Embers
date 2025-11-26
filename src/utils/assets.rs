@@ -10,27 +10,85 @@ use std::sync::{LazyLock, Mutex};
 #[derive(Eq, PartialEq, Hash, Clone)]
 pub struct AssetScope {
     root: AssetPath<'static>,
+    images_root: AssetPath<'static>,
+    models_root: AssetPath<'static>,
 }
 impl AssetScope {
     pub fn new(root: impl Into<AssetPath<'static>>) -> Self {
-        Self { root: root.into() }
+        let root = root.into();
+        Self {
+            images_root: root.resolve("images").unwrap(),
+            models_root: root.resolve("models").unwrap(),
+            root,
+        }
     }
-    pub fn entity_model(&self, asset_server: &AssetServer, key: &NamespacedKey) -> Handle<Scene> {
-        asset_server.load(
-            self.root
-                .resolve(&format!(
-                    "models/entities/{}/{}.glb#Scene0",
-                    key.namespace(),
-                    key.key()
-                ))
-                .unwrap(),
+    pub fn entity_scene(
+        &self,
+        asset_server: &AssetServer,
+        key: &NamespacedKey,
+        label: usize,
+    ) -> Handle<Scene> {
+        self.scene(
+            asset_server,
+            format!("entities/{}/{}", key.namespace(), key.key()),
+            label,
         )
+    }
+    pub fn animate_entity(
+        &self,
+        animation_player: &mut AnimationPlayer,
+        asset_server: &AssetServer,
+        key: &NamespacedKey,
+        label: usize,
+    ) -> AnimationGraphHandle {
+        self.animate(
+            animation_player,
+            asset_server,
+            format!("entities/{}/{}", key.namespace(), key.key()),
+            label,
+        )
+    }
+    #[inline]
+    fn image(&self, asset_server: &AssetServer, path: String) -> Handle<Image> {
+        asset_server.load(self.images_root.resolve(&path).unwrap())
+    }
+    #[inline]
+    fn scene(&self, asset_server: &AssetServer, path: String, label: usize) -> Handle<Scene> {
+        self.model(asset_server, path, GltfAssetLabel::Scene(label))
+    }
+    #[inline]
+    fn animate(
+        &self,
+        animation_player: &mut AnimationPlayer,
+        asset_server: &AssetServer,
+        path: String,
+        label: usize,
+    ) -> AnimationGraphHandle {
+        let (graph, index) = AnimationGraph::from_clip(self.animation(asset_server, path, label));
+        animation_player.play(index).repeat();
+        AnimationGraphHandle(asset_server.add(graph))
+    }
+    #[inline]
+    fn animation(
+        &self,
+        asset_server: &AssetServer,
+        path: String,
+        label: usize,
+    ) -> Handle<AnimationClip> {
+        self.model(asset_server, path, GltfAssetLabel::Animation(label))
+    }
+    #[inline]
+    fn model<M: Asset>(
+        &self,
+        asset_server: &AssetServer,
+        path: String,
+        label: GltfAssetLabel,
+    ) -> Handle<M> {
+        asset_server.load(label.from_asset(self.models_root.resolve(&(path + ".glb")).unwrap()))
     }
 }
 
-pub static GLOBAL_ASSETS: LazyLock<AssetScope> = LazyLock::new(|| AssetScope {
-    root: AssetPath::parse("global"),
-});
+pub static GLOBAL_ASSETS: LazyLock<AssetScope> = LazyLock::new(|| AssetScope::new("global"));
 
 fn load_global_assets(mut asset_load_requests: MessageWriter<AssetLoadRequest>) {
     asset_load_requests.write(AssetLoadRequest::Scope(&GLOBAL_ASSETS));
