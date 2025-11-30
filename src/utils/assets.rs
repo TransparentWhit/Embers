@@ -22,6 +22,7 @@ impl AssetScope {
             root,
         }
     }
+    #[inline]
     pub fn entity_scene(
         &self,
         asset_server: &AssetServer,
@@ -30,10 +31,11 @@ impl AssetScope {
     ) -> Handle<Scene> {
         self.scene(
             asset_server,
-            format!("entities/{}/{}", key.namespace(), key.key()),
+            &*format!("entities/{}/{}", key.namespace(), key.key()),
             label,
         )
     }
+    #[inline]
     pub fn animate_entity(
         &self,
         animation_player: &mut AnimationPlayer,
@@ -44,24 +46,38 @@ impl AssetScope {
         self.animate(
             animation_player,
             asset_server,
-            format!("entities/{}/{}", key.namespace(), key.key()),
+            &*format!("entities/{}/{}", key.namespace(), key.key()),
             label,
         )
     }
     #[inline]
-    fn image(&self, asset_server: &AssetServer, path: String) -> Handle<Image> {
-        asset_server.load(self.images_root.resolve(&path).unwrap())
+    pub fn image_node<'a>(
+        &self,
+        asset_server: &AssetServer,
+        path: impl Into<&'a str>,
+    ) -> ImageNode {
+        ImageNode::new(self.image(asset_server, &*format!("ui/{}.png", path.into())))
+            .with_mode(NodeImageMode::Stretch)
     }
     #[inline]
-    fn scene(&self, asset_server: &AssetServer, path: String, label: usize) -> Handle<Scene> {
+    fn image<'a>(&self, asset_server: &AssetServer, path: impl Into<&'a str>) -> Handle<Image> {
+        asset_server.load(self.images_root.resolve(path.into()).unwrap())
+    }
+    #[inline]
+    fn scene<'a>(
+        &self,
+        asset_server: &AssetServer,
+        path: impl Into<&'a str>,
+        label: usize,
+    ) -> Handle<Scene> {
         self.model(asset_server, path, GltfAssetLabel::Scene(label))
     }
     #[inline]
-    fn animate(
+    fn animate<'a>(
         &self,
         animation_player: &mut AnimationPlayer,
         asset_server: &AssetServer,
-        path: String,
+        path: impl Into<&'a str>,
         label: usize,
     ) -> AnimationGraphHandle {
         let (graph, index) = AnimationGraph::from_clip(self.animation(asset_server, path, label));
@@ -69,22 +85,28 @@ impl AssetScope {
         AnimationGraphHandle(asset_server.add(graph))
     }
     #[inline]
-    fn animation(
+    fn animation<'a>(
         &self,
         asset_server: &AssetServer,
-        path: String,
+        path: impl Into<&'a str>,
         label: usize,
     ) -> Handle<AnimationClip> {
         self.model(asset_server, path, GltfAssetLabel::Animation(label))
     }
     #[inline]
-    fn model<M: Asset>(
+    fn model<'a, M: Asset>(
         &self,
         asset_server: &AssetServer,
-        path: String,
+        path: impl Into<&'a str>,
         label: GltfAssetLabel,
     ) -> Handle<M> {
-        asset_server.load(label.from_asset(self.models_root.resolve(&(path + ".glb")).unwrap()))
+        asset_server.load(
+            label.from_asset(
+                self.models_root
+                    .resolve(&format!("{}.glb", path.into()))
+                    .unwrap(),
+            ),
+        )
     }
 }
 

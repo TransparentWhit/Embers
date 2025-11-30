@@ -1,5 +1,7 @@
 use crate::GameState;
-use crate::world::entity::living::player::{Player, player};
+use crate::ui::scalable;
+use crate::utils::assets::GLOBAL_ASSETS;
+use crate::world::entity::living::player::{HOTBAR_SLOTS, Player, player};
 use crate::world::entity::tnt::tnt;
 use avian3d::prelude::*;
 use bevy::camera::{ScalingMode, Viewport};
@@ -29,6 +31,12 @@ pub enum PlayerCamera {
     },
 }
 
+#[derive(Component)]
+struct HotbarSlot(u8);
+
+#[derive(Component)]
+struct MainhandSlot;
+
 fn init(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -39,14 +47,86 @@ fn init(
         DespawnOnExit(GameState::World),
         Transform::default(),
         Node {
-            width: Val::Percent(100.),
-            height: Val::Percent(100.),
+            width: percent(100),
+            height: percent(100),
             display: Display::Flex,
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             ..default()
         },
         children![
+            (
+                Node {
+                    width: percent(100),
+                    height: percent(100),
+                    ..default()
+                },
+                children![(
+                    scalable(|scale| Node {
+                        left: percent(50),
+                        bottom: px(scale * 7),
+                        margin: UiRect::left(px(scale * -185 / 2)),
+                        position_type: PositionType::Absolute,
+                        width: px(scale * 185),
+                        height: px(scale * 18),
+                        display: Display::Flex,
+                        flex_direction: FlexDirection::Row,
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    }),
+                    children![
+                        (
+                            scalable(|scale| Node {
+                                width: px(scale * 122),
+                                height: px(scale * 22),
+                                margin: UiRect::horizontal(px(scale * 3)),
+                                ..default()
+                            }),
+                            GLOBAL_ASSETS.image_node(&asset_server, "hotbar"),
+                            Children::spawn({
+                                let mut hotbar_slots = Vec::with_capacity(HOTBAR_SLOTS as usize);
+                                for i in 0..HOTBAR_SLOTS {
+                                    hotbar_slots.push((
+                                        scalable(|scale| Node {
+                                            display: Display::None,
+                                            width: px(scale * 16),
+                                            height: px(scale * 16),
+                                            margin: UiRect::horizontal(px(scale * 2)),
+                                            ..default()
+                                        }),
+                                        ImageNode::default(),
+                                        HotbarSlot(i),
+                                    ));
+                                }
+                                (
+                                    hotbar_slots,
+                                    Spawn((
+                                        scalable(|scale| Node {
+                                            display: Display::None,
+                                            width: px(scale * 24),
+                                            height: px(scale * 23),
+                                            ..default()
+                                        }),
+                                        GLOBAL_ASSETS.image_node(&asset_server, "hotbar_selection"),
+                                        children![(ImageNode::default(), MainhandSlot,),],
+                                    )),
+                                )
+                            })
+                        ),
+                        (
+                            scalable(|scale| Node {
+                                width: px(scale * 22),
+                                height: px(scale * 22),
+                                margin: UiRect::horizontal(px(scale * 3)),
+                                ..default()
+                            }),
+                            GLOBAL_ASSETS.image_node(&asset_server, "main_hand"),
+                            children![(ImageNode::default(), MainhandSlot,),]
+                        ),
+                    ],
+                ),]
+            ),
             (
                 Camera::default(),
                 Camera3d::default(),
@@ -59,9 +139,9 @@ fn init(
                     ..OrthographicProjection::default_3d()
                 }),
                 PlayerCamera::Isometric {
-                    distance: 12.0,
-                    height: 8.0,
-                    angle: 35.0f32.to_radians(),
+                    distance: 12.,
+                    height: 8.,
+                    angle: 35f32.to_radians(),
                 },
             ),
             (

@@ -3,7 +3,7 @@ pub mod creeper;
 pub mod player;
 
 use super::entity;
-use crate::utils::{Keyed, NamespacedKey};
+use crate::utils::NamespacedKey;
 use crate::world::entity::living::attributes::AttributeInstance;
 use avian3d::prelude::*;
 use bevy::prelude::*;

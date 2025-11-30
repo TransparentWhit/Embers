@@ -36,17 +36,28 @@ impl Default for MaxStackSize {
     }
 }
 
-pub enum ItemUsage {
-    BlockAttack {},
-    Consume {},
-    MeleeAttack {},
-    RangedAttack {},
-    SpawnEntity {},
+#[derive(Default)]
+pub enum ItemActionTrigger {
+    #[default]
+    Click,
+    DoubleClick,
 }
+
+#[derive(Default)]
+pub enum ItemActionWield {
+    #[default]
+    Single,
+    Dual,
+}
+
 #[derive(Component)]
-pub struct PrimaryUsage(ItemUsage);
-#[derive(Component)]
-pub struct DoubleClickUsage(ItemUsage);
+pub struct ItemAction {
+    on_begin: fn(),
+    on_end: fn(),
+    trigger: ItemActionTrigger,
+    wield: ItemActionWield,
+    duration: f32,
+}
 
 #[derive(Component)]
 pub struct Weight(f32);

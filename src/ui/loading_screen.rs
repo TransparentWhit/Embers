@@ -27,8 +27,8 @@ fn init(mut commands: Commands) {
         Camera2d,
         Transform::default(),
         Node {
-            width: Val::Percent(100f32),
-            height: Val::Percent(100f32),
+            width: percent(100),
+            height: percent(100),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             ..default()

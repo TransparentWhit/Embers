@@ -5,6 +5,7 @@ pub mod world;
 use avian3d::PhysicsPlugins;
 use avian3d::prelude::PhysicsSchedule;
 use bevy::DefaultPlugins;
+use bevy::image::ImageSamplerDescriptor;
 use bevy::prelude::*;
 use bevy::winit::WINIT_WINDOWS;
 use bevy_tnua::prelude::TnuaControllerPlugin;
@@ -26,10 +27,16 @@ enum GameState {
 // then somehow correctly switches to main screen because GameState and Loading happen to be in the correct default states
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins.set(AssetPlugin {
-            file_path: format!("res{}assets", MAIN_SEPARATOR),
-            ..default()
-        }))
+        .add_plugins(
+            DefaultPlugins
+                .set(AssetPlugin {
+                    file_path: format!("res{}assets", MAIN_SEPARATOR),
+                    ..default()
+                })
+                .set(ImagePlugin {
+                    default_sampler: ImageSamplerDescriptor::nearest(),
+                }),
+        )
         .add_plugins(PhysicsPlugins::default())
         .add_plugins(TnuaControllerPlugin::new(PhysicsSchedule))
         .add_plugins(TnuaAvian3dPlugin::new(PhysicsSchedule))

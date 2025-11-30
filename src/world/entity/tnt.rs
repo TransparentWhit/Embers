@@ -4,15 +4,16 @@ use crate::utils::assets::GLOBAL_ASSETS;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use std::sync::LazyLock;
+use std::time::Duration;
 
 static MODEL_KEY: LazyLock<NamespacedKey> = LazyLock::new(|| NamespacedKey::new_embers("tnt"));
 static HITBOX: LazyLock<Collider> = LazyLock::new(|| Collider::cuboid(1.0, 1.0, 1.0));
 
 #[derive(Component)]
-pub struct Fuse(f32);
+pub struct Fuse(Timer);
 impl Default for Fuse {
     fn default() -> Self {
-        Self(4.0)
+        Self(Timer::new(Duration::from_secs_f32(4.0), TimerMode::Once))
     }
 }
 
@@ -34,11 +35,8 @@ pub(in crate::world::entity) fn fuse(
                 0,
             ));
         }
-        fuse.0 -= time.delta_secs();
-        if fuse.0 % TWO_FLASH_INTERVALS >= FLASH_INTERVAL {
-            //commands.entity(entity).log_components();
-        }
-        if fuse.0.is_sign_negative() {
+        fuse.0.tick(time.delta());
+        if fuse.0.is_finished() {
             commands.entity(entity).despawn();
         }
     }

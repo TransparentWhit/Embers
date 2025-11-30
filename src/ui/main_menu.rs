@@ -1,8 +1,8 @@
+use crate::GameState;
 use crate::ui::loading_screen::Loading;
 use crate::ui::*;
 use crate::utils::assets::AssetLoadRequest;
 use crate::world::LOBBY;
-use crate::{GameState, ui_button};
 use bevy::color::palettes::basic::YELLOW;
 use bevy::prelude::*;
 use bevy::sprite::Text2dShadow;
@@ -27,8 +27,8 @@ fn init(mut commands: Commands) {
         Camera2d,
         Transform::default(),
         Node {
-            width: Val::Percent(100f32),
-            height: Val::Percent(100f32),
+            width: percent(100),
+            height: percent(100),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             ..default()
@@ -46,9 +46,9 @@ fn init(mut commands: Commands) {
                     Text2dShadow::default(),
                     TextColor(YELLOW.into())
                 ),
-                ui_button!("Play", MainMenuButton::Play),
-                ui_button!("Options", MainMenuButton::Options),
-                ui_button!("Quit", MainMenuButton::Quit),
+                (ui_button("Play"), MainMenuButton::Play,),
+                (ui_button("Options"), MainMenuButton::Options,),
+                (ui_button("Quit"), MainMenuButton::Quit,),
             ]
         )],
     ));

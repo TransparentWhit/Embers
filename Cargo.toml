@@ -19,6 +19,7 @@ bevy-tnua = "0.26"
 bevy-tnua-avian3d = "0.8"
 winit = { version = "0.30", default-features = false }
 image = { version = "0.25", default-features = false }
+duplicate = "2.0"
 regex = "1.12"
 rand = "0.9"
 thiserror = "2.0"
