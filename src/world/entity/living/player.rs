@@ -1,8 +1,8 @@
 use super::{Attributes, living_entity};
-use crate::ui::world::PlayerCamera;
+use crate::ui::world::{HotbarSelectionUpdated, PlayerCamera};
 use crate::utils::NamespacedKey;
 use crate::world::entity::living::attributes::embers;
-use crate::world::item::ItemActionTrigger;
+use crate::world::item::{ItemActionTrigger, ItemStack};
 use avian3d::prelude::*;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
@@ -59,6 +59,8 @@ button_input!(pressed);
 button_input!(just_pressed);
 button_input!(just_released);
 
+pub type InventorySlot = i8;
+
 pub(in crate::world) fn process_input(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
@@ -66,20 +68,29 @@ pub(in crate::world) fn process_input(
     window: Single<&Window, With<PrimaryWindow>>,
     mut player: Single<(&Attributes, &mut SelectedHotbarSlot, &mut TnuaController), With<Player>>,
     player_camera: Single<(&Camera, &PlayerCamera), With<PlayerCamera>>,
+    mut hotbar_selection_updated_message: MessageWriter<HotbarSelectionUpdated>,
 ) {
-    let (attributes, selected_item_slot, controller) = player.deref_mut();
-    match () {
-        _ if just_pressed(&CONTROLS_HOTBAR_0, &keys, &mouse) => selected_item_slot.0 = 0,
-        _ if just_pressed(&CONTROLS_HOTBAR_1, &keys, &mouse) => selected_item_slot.0 = 1,
-        _ if just_pressed(&CONTROLS_HOTBAR_2, &keys, &mouse) => selected_item_slot.0 = 2,
-        _ if just_pressed(&CONTROLS_HOTBAR_3, &keys, &mouse) => selected_item_slot.0 = 3,
-        _ if just_pressed(&CONTROLS_HOTBAR_4, &keys, &mouse) => selected_item_slot.0 = 4,
-        _ if just_pressed(&CONTROLS_HOTBAR_5, &keys, &mouse) => selected_item_slot.0 = 5,
-        _ => {}
+    let (attributes, selected_hotbar_slot, controller) = player.deref_mut();
+    let mut hotbar_selection_updated = false;
+    match hotbar_selection_updated = true {
+        _ if just_pressed(&CONTROLS_HOTBAR_0, &keys, &mouse) => selected_hotbar_slot.0 = 0,
+        _ if just_pressed(&CONTROLS_HOTBAR_1, &keys, &mouse) => selected_hotbar_slot.0 = 1,
+        _ if just_pressed(&CONTROLS_HOTBAR_2, &keys, &mouse) => selected_hotbar_slot.0 = 2,
+        _ if just_pressed(&CONTROLS_HOTBAR_3, &keys, &mouse) => selected_hotbar_slot.0 = 3,
+        _ if just_pressed(&CONTROLS_HOTBAR_4, &keys, &mouse) => selected_hotbar_slot.0 = 4,
+        _ if just_pressed(&CONTROLS_HOTBAR_5, &keys, &mouse) => selected_hotbar_slot.0 = 5,
+        _ => hotbar_selection_updated = false,
     }
-    if let MouseScrollUnit::Pixel = mouse_scroll.unit {
-        selected_item_slot.0 += mouse_scroll.delta.y as u8;
-        selected_item_slot.0 %= HOTBAR_SLOTS;
+    if let MouseScrollUnit::Line = mouse_scroll.unit
+        && let delta = mouse_scroll.delta.y as InventorySlot
+        && delta != 0
+    {
+        selected_hotbar_slot.0 += delta;
+        selected_hotbar_slot.0 = selected_hotbar_slot.0.rem_euclid(HOTBAR_SLOTS);
+        hotbar_selection_updated = true;
+    }
+    if hotbar_selection_updated {
+        hotbar_selection_updated_message.write(HotbarSelectionUpdated);
     }
     if just_pressed(&CONTROLS_SWAP_OFF_HAND, &keys, &mouse) {
         // todo
@@ -138,10 +149,15 @@ pub struct Player {
     pub time_crystals: i32,
 }
 
-pub const HOTBAR_SLOTS: u8 = 6;
+#[derive(Component)]
+pub struct PlayerInventory {
+    pub items: [Option<ItemStack>; 36],
+}
+
+pub const HOTBAR_SLOTS: InventorySlot = 6;
 
 #[derive(Component)]
-pub struct SelectedHotbarSlot(u8);
+pub struct SelectedHotbarSlot(pub InventorySlot);
 impl Default for SelectedHotbarSlot {
     fn default() -> Self {
         Self(0)

@@ -1,7 +1,9 @@
 use crate::GameState;
-use crate::ui::scalable;
+use crate::ui::{ScalableComponent, UIScale, scalable};
 use crate::utils::assets::GLOBAL_ASSETS;
-use crate::world::entity::living::player::{HOTBAR_SLOTS, Player, player};
+use crate::world::entity::living::player::{
+    HOTBAR_SLOTS, InventorySlot, Player, SelectedHotbarSlot, player,
+};
 use crate::world::entity::tnt::tnt;
 use avian3d::prelude::*;
 use bevy::camera::{ScalingMode, Viewport};
@@ -32,10 +34,16 @@ pub enum PlayerCamera {
 }
 
 #[derive(Component)]
-struct HotbarSlot(u8);
+struct HotbarSlot(InventorySlot);
 
 #[derive(Component)]
-struct MainhandSlot;
+struct HotbarSelection;
+
+#[derive(Component)]
+struct MainHandSlot;
+
+#[derive(Message)]
+pub struct HotbarSelectionUpdated;
 
 fn init(
     mut commands: Commands,
@@ -89,7 +97,6 @@ fn init(
                                 for i in 0..HOTBAR_SLOTS {
                                     hotbar_slots.push((
                                         scalable(|scale| Node {
-                                            display: Display::None,
                                             width: px(scale * 16),
                                             height: px(scale * 16),
                                             margin: UiRect::horizontal(px(scale * 2)),
@@ -103,13 +110,15 @@ fn init(
                                     hotbar_slots,
                                     Spawn((
                                         scalable(|scale| Node {
-                                            display: Display::None,
+                                            position_type: PositionType::Absolute,
+                                            left: px(scale * -1),
+                                            top: px(scale * -1),
                                             width: px(scale * 24),
                                             height: px(scale * 23),
                                             ..default()
                                         }),
                                         GLOBAL_ASSETS.image_node(&asset_server, "hotbar_selection"),
-                                        children![(ImageNode::default(), MainhandSlot,),],
+                                        HotbarSelection,
                                     )),
                                 )
                             })
@@ -122,7 +131,7 @@ fn init(
                                 ..default()
                             }),
                             GLOBAL_ASSETS.image_node(&asset_server, "main_hand"),
-                            children![(ImageNode::default(), MainhandSlot,),]
+                            children![(ImageNode::default(), MainHandSlot,),]
                         ),
                     ],
                 ),]
@@ -217,8 +226,33 @@ fn update_player_camera(
     }
 }
 
+fn update_hotbar_selection(
+    mut updated_message: MessageReader<HotbarSelectionUpdated>,
+    mut hotbar_selection_node: Single<
+        (&mut ScalableComponent<Node>, &mut Node),
+        With<HotbarSelection>,
+    >,
+    selected_hotbar_slot: Single<&SelectedHotbarSlot>,
+) {
+    for _ in updated_message.read() {
+        let (scalable, hotbar_selection_node) = hotbar_selection_node.deref_mut();
+        let selected_hotbar_slot = selected_hotbar_slot.0 as UIScale;
+        **scalable = ScalableComponent::dynamic(move |scale| Node {
+            position_type: PositionType::Absolute,
+            left: px(scale * (-1 + selected_hotbar_slot * 20)),
+            top: px(scale * -1),
+            width: px(scale * 24),
+            height: px(scale * 23),
+            ..default()
+        });
+        scalable.apply(hotbar_selection_node);
+    }
+}
+
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(OnEnter(GameState::World), (init, resize_camera).chain());
     app.add_systems(Update, resize_camera.run_if(on_message::<WindowResized>));
     app.add_systems(Update, update_player_camera);
+    app.add_message::<HotbarSelectionUpdated>();
+    app.add_systems(Update, update_hotbar_selection);
 }

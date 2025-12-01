@@ -10,7 +10,16 @@ use std::sync::RwLock;
 fn scalable<C: Component>(scalable: fn(UIScale) -> C) -> impl Bundle<Effect: NoBundleEffect> {
     (
         scalable(*UI_SCALE.read().unwrap()),
-        ScalableComponent(scalable),
+        ScalableComponent::new(scalable),
+    )
+}
+
+fn dynamic_scalable<C: Component, F: Fn(UIScale) -> C + Send + Sync + 'static>(
+    dynamic_scalable: F,
+) -> impl Bundle<Effect: NoBundleEffect> {
+    (
+        dynamic_scalable(*UI_SCALE.read().unwrap()),
+        ScalableComponent::dynamic(dynamic_scalable),
     )
 }
 
@@ -36,7 +45,27 @@ struct RescaleUI;
 type UIScale = i32;
 
 #[derive(Component)]
-struct ScalableComponent<C: Component>(fn(UIScale) -> C);
+enum ScalableComponent<C: Component> {
+    Static(fn(UIScale) -> C),
+    Dynamic(Box<dyn Fn(UIScale) -> C + Send + Sync>),
+}
+
+impl<C: Component> ScalableComponent<C> {
+    fn new(scalable: fn(UIScale) -> C) -> Self {
+        Self::Static(scalable)
+    }
+    fn dynamic<F: Fn(UIScale) -> C + Send + Sync + 'static>(dynamic_scalable: F) -> Self {
+        Self::Dynamic(Box::new(dynamic_scalable))
+    }
+    fn apply(&self, component: &mut C) {
+        *component = match self {
+            ScalableComponent::Static(scalable) => scalable(*UI_SCALE.read().unwrap()),
+            ScalableComponent::Dynamic(dynamic_scalable) => {
+                dynamic_scalable(*UI_SCALE.read().unwrap())
+            }
+        }
+    }
+}
 
 static UI_SCALE: RwLock<UIScale> = RwLock::new(3);
 
@@ -45,8 +74,8 @@ fn rescale_components<C: Component<Mutability = Mutable>>(
     mut rescale_messages: MessageReader<RescaleUI>,
 ) {
     for _ in rescale_messages.read() {
-        for (scalable, mut node) in scalables.iter_mut() {
-            *node = scalable.0(*UI_SCALE.read().unwrap());
+        for (scalable, mut component) in scalables.iter_mut() {
+            scalable.apply(&mut component);
         }
     }
 }
