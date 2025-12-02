@@ -11,7 +11,7 @@ pub mod embers {
     item!(SWORD, "sword");
 }
 
-#[derive(Component)]
+#[derive(Clone, Component)]
 pub struct ItemStack {
     id: NamespacedKey,
     count: u8,
@@ -36,14 +36,14 @@ impl Default for MaxStackSize {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Default, Eq, Hash, PartialEq)]
 pub enum ItemActionTrigger {
     #[default]
     Click,
     DoubleClick,
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Default, Eq, Hash, PartialEq)]
 pub enum ItemActionWield {
     #[default]
     Single,

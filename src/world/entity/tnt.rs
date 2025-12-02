@@ -7,7 +7,6 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 static MODEL_KEY: LazyLock<NamespacedKey> = LazyLock::new(|| NamespacedKey::new_embers("tnt"));
-static HITBOX: LazyLock<Collider> = LazyLock::new(|| Collider::cuboid(1.0, 1.0, 1.0));
 
 #[derive(Component)]
 pub struct Fuse(Timer);
@@ -48,7 +47,7 @@ pub fn tnt(asset_server: &AssetServer) -> impl Bundle {
         Fuse::default(),
         AnimationPlayer::default(),
         SceneRoot(GLOBAL_ASSETS.entity_scene(asset_server, &MODEL_KEY, 0)),
-        HITBOX.clone(),
+        Collider::cuboid(1.0, 1.0, 1.0),
         RigidBody::Dynamic,
     )
 }

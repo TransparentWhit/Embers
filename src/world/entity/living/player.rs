@@ -6,11 +6,14 @@ use crate::world::item::{ItemActionTrigger, ItemStack};
 use avian3d::prelude::*;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
+use bevy::time::Stopwatch;
 use bevy::window::PrimaryWindow;
 use bevy_tnua::prelude::*;
 use std::collections::HashMap;
+use std::iter::repeat;
 use std::ops::DerefMut;
 use std::sync::{LazyLock, RwLock};
+use std::time::Duration;
 
 macro_rules! controls {
     ($ident:ident, M@$default_mouse:ident) => {
@@ -66,20 +69,31 @@ pub(in crate::world) fn process_input(
     mouse: Res<ButtonInput<MouseButton>>,
     mouse_scroll: Res<AccumulatedMouseScroll>,
     window: Single<&Window, With<PrimaryWindow>>,
-    mut player: Single<(&Attributes, &mut SelectedHotbarSlot, &mut TnuaController), With<Player>>,
+    mut player: Single<
+        (
+            &Attributes,
+            &PlayerInventory,
+            &mut SelectedHotbarSlot,
+            &mut PlayerActionStatus,
+            &mut TnuaController,
+        ),
+        With<Player>,
+    >,
     player_camera: Single<(&Camera, &PlayerCamera), With<PlayerCamera>>,
     mut hotbar_selection_updated_message: MessageWriter<HotbarSelectionUpdated>,
+    time: Res<Time>,
 ) {
-    let (attributes, selected_hotbar_slot, controller) = player.deref_mut();
-    let mut hotbar_selection_updated = false;
-    match hotbar_selection_updated = true {
+    let (attributes, inventory, selected_hotbar_slot, action_status, controller) =
+        player.deref_mut();
+    let prev_hotbar_selection = selected_hotbar_slot.0;
+    match () {
         _ if just_pressed(&CONTROLS_HOTBAR_0, &keys, &mouse) => selected_hotbar_slot.0 = 0,
         _ if just_pressed(&CONTROLS_HOTBAR_1, &keys, &mouse) => selected_hotbar_slot.0 = 1,
         _ if just_pressed(&CONTROLS_HOTBAR_2, &keys, &mouse) => selected_hotbar_slot.0 = 2,
         _ if just_pressed(&CONTROLS_HOTBAR_3, &keys, &mouse) => selected_hotbar_slot.0 = 3,
         _ if just_pressed(&CONTROLS_HOTBAR_4, &keys, &mouse) => selected_hotbar_slot.0 = 4,
         _ if just_pressed(&CONTROLS_HOTBAR_5, &keys, &mouse) => selected_hotbar_slot.0 = 5,
-        _ => hotbar_selection_updated = false,
+        _ => {}
     }
     if let MouseScrollUnit::Line = mouse_scroll.unit
         && let delta = mouse_scroll.delta.y as InventorySlot
@@ -87,15 +101,21 @@ pub(in crate::world) fn process_input(
     {
         selected_hotbar_slot.0 += delta;
         selected_hotbar_slot.0 = selected_hotbar_slot.0.rem_euclid(HOTBAR_SLOTS);
-        hotbar_selection_updated = true;
     }
-    if hotbar_selection_updated {
+    if prev_hotbar_selection != selected_hotbar_slot.0 {
         hotbar_selection_updated_message.write(HotbarSelectionUpdated);
     }
-    if just_pressed(&CONTROLS_SWAP_OFF_HAND, &keys, &mouse) {
-        // todo
-    };
-    if pressed(&CONTROLS_USE_MAIN_HAND, &keys, &mouse) {}
+    if just_pressed(&CONTROLS_SWAP_OFF_HAND, &keys, &mouse) {};
+    let using_main_hand = pressed(&CONTROLS_USE_MAIN_HAND, &keys, &mouse);
+    action_status.update_status(
+        EquipmentSlot::MainHand,
+        if using_main_hand {
+            Some(ItemActionTrigger::Click)
+        } else {
+            None
+        },
+    );
+    action_status.tick(time.delta());
     if pressed(&CONTROLS_MOVEMENT, &keys, &mouse)
         && let Some(physical_cursor_position) = window.physical_cursor_position()
     {
@@ -139,7 +159,6 @@ static ATTRIBUTES: LazyLock<HashMap<NamespacedKey, f32>> = LazyLock::new(|| {
         (embers::MOVEMENT_SPEED.clone(), 2.),
     ])
 });
-static HITBOX: LazyLock<Collider> = LazyLock::new(|| Collider::cylinder(0.5, 1.7));
 const FLOAT_HEIGHT: f32 = 0.85;
 
 #[derive(Component)]
@@ -149,12 +168,29 @@ pub struct Player {
     pub time_crystals: i32,
 }
 
+pub const HOTBAR_SLOTS: InventorySlot = 6;
+
 #[derive(Component)]
 pub struct PlayerInventory {
-    pub items: [Option<ItemStack>; 36],
+    pub items: [Option<ItemStack>; 38],
 }
-
-pub const HOTBAR_SLOTS: InventorySlot = 6;
+impl Default for PlayerInventory {
+    fn default() -> Self {
+        Self {
+            items: [const { None }; 38],
+        }
+    }
+}
+/*
+impl PlayerInventory {
+    fn equipment_slot(equipment_slot: EquipmentSlot) -> InventorySlot {
+        match equipment_slot {
+            EquipmentSlot::MainHand => 0,
+            EquipmentSlot::OffHand => 36,
+            EquipmentSlot::Armor => 37,
+        }
+    }
+}*/
 
 #[derive(Component)]
 pub struct SelectedHotbarSlot(pub InventorySlot);
@@ -164,17 +200,37 @@ impl Default for SelectedHotbarSlot {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub enum SlotActionStatus {
     #[default]
     Idle,
     Active {
-        started: f32,
+        timer: Stopwatch,
         trigger: ItemActionTrigger,
     },
 }
 
-#[derive(Eq, Hash, PartialEq)]
+impl SlotActionStatus {
+    pub fn idle() -> Self {
+        Self::Idle
+    }
+    pub fn activate(trigger: ItemActionTrigger) -> Self {
+        Self::Active {
+            timer: Stopwatch::new(),
+            trigger,
+        }
+    }
+    #[inline]
+    pub fn is_idle(&self) -> bool {
+        matches!(self, Self::Idle)
+    }
+    #[inline]
+    pub fn is_active(&self) -> bool {
+        matches!(self, Self::Active { .. })
+    }
+}
+
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub enum EquipmentSlot {
     MainHand,
     OffHand,
@@ -182,21 +238,49 @@ pub enum EquipmentSlot {
 }
 
 #[derive(Component)]
-pub struct ActionStatus(HashMap<EquipmentSlot, SlotActionStatus>);
-impl Default for ActionStatus {
-    fn default() -> Self {
-        Self(HashMap::from([(
-            EquipmentSlot::MainHand,
-            SlotActionStatus::Idle,
-        )]))
+pub struct PlayerActionStatus(HashMap<EquipmentSlot, SlotActionStatus>);
+
+impl PlayerActionStatus {
+    fn new() -> Self {
+        Self(
+            [
+                EquipmentSlot::MainHand,
+                EquipmentSlot::OffHand,
+                EquipmentSlot::Armor,
+            ]
+            .into_iter()
+            .zip(repeat(SlotActionStatus::Idle))
+            .collect(),
+        )
+    }
+    fn update_status(&mut self, slot: EquipmentSlot, active_trigger: Option<ItemActionTrigger>) {
+        let status = self.0.get_mut(&slot).unwrap();
+        if let Some(active_trigger) = active_trigger {
+            if status.is_idle() {
+                *status = SlotActionStatus::activate(active_trigger);
+            }
+        } else {
+            if status.is_active() {
+                *status = SlotActionStatus::idle();
+            }
+        }
+    }
+    fn tick(&mut self, delta: Duration) {
+        for (_, action_status) in &mut self.0 {
+            if let SlotActionStatus::Active { timer, .. } = action_status {
+                timer.tick(delta);
+            }
+        }
     }
 }
 
 pub fn player() -> impl Bundle {
     (
         living_entity(&ATTRIBUTES),
-        HITBOX.clone(),
+        Collider::cylinder(0.5, 1.7),
+        PlayerInventory::default(),
         SelectedHotbarSlot::default(),
+        PlayerActionStatus::new(),
         Player {
             flops: 0,
             hashes: 0,
