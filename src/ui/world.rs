@@ -1,6 +1,7 @@
 use crate::GameState;
 use crate::ui::{ScalableComponent, UIScale, scalable};
 use crate::utils::assets::GLOBAL_ASSETS;
+use crate::world::entity::living::dummy::dummy;
 use crate::world::entity::living::player::{
     HOTBAR_SLOTS, InventorySlot, Player, SelectedHotbarSlot, player,
 };
@@ -180,6 +181,7 @@ fn init(
                 LinearVelocity::from(Vec3::new(0., 10., 0.)),
             ),
             (tnt(&asset_server), Transform::from_xyz(0.0, 0.5, 0.0)),
+            (dummy(&asset_server), Transform::from_xyz(5.0, 0.5, 0.0)),
         ],
     ));
 }

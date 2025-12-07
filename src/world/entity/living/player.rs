@@ -1,6 +1,7 @@
 use super::{Attributes, living_entity};
 use crate::ui::world::{HotbarSelectionUpdated, PlayerCamera};
 use crate::utils::NamespacedKey;
+use crate::utils::input::{DoubleClicks, InputButton, just_pressed, pressed};
 use crate::world::entity::living::attributes::embers;
 use crate::world::item::{ItemActionTrigger, ItemStack};
 use avian3d::prelude::*;
@@ -24,43 +25,31 @@ macro_rules! controls {
         pub static $ident: RwLock<InputButton> =
             RwLock::new(InputButton::Keycode(KeyCode::$default_key));
     };
+    [$ident:ident, $len:expr, $($default_type:ident@$default_value:ident),+ $(,)?] => {
+        pub static $ident: [RwLock<InputButton>; $len] = [$(controls!(@parse $default_type@$default_value)),*];
+    };
+    (@parse M@$default_mouse:ident) => {
+        RwLock::new(InputButton::MouseButton(MouseButton::$default_mouse))
+    };
+    (@parse K@$default_key:ident) => {
+        RwLock::new(InputButton::Keycode(KeyCode::$default_key))
+    };
 }
 controls!(CONTROLS_MOVEMENT, M@Left);
 controls!(CONTROLS_INTERACT, K@KeyE);
 controls!(CONTROLS_USE_MAIN_HAND, K@ShiftLeft);
 controls!(CONTROLS_USE_OFF_HAND, M@Right);
-controls!(CONTROLS_HOTBAR_0, K@Digit1);
-controls!(CONTROLS_HOTBAR_1, K@Digit2);
-controls!(CONTROLS_HOTBAR_2, K@Digit3);
-controls!(CONTROLS_HOTBAR_3, K@Digit4);
-controls!(CONTROLS_HOTBAR_4, K@Digit5);
-controls!(CONTROLS_HOTBAR_5, K@Digit6);
+controls!(CONTROLS_USE_ARMOR, K@KeyT);
+controls![CONTROLS_HOTBARS, HOTBAR_SLOTS as usize,
+    K@Digit1,
+    K@Digit2,
+    K@Digit3,
+    K@Digit4,
+    K@Digit5,
+    K@Digit6,
+];
 controls!(CONTROLS_SWAP_OFF_HAND, K@KeyF);
 controls!(CONTROLS_INVENTORY, K@KeyR);
-
-pub enum InputButton {
-    Keycode(KeyCode),
-    MouseButton(MouseButton),
-}
-
-macro_rules! button_input {
-    ($event:ident) => {
-        #[inline]
-        fn $event(
-            input_button: &RwLock<InputButton>,
-            key_codes: &ButtonInput<KeyCode>,
-            mouse_buttons: &ButtonInput<MouseButton>,
-        ) -> bool {
-            match *input_button.read().unwrap() {
-                InputButton::Keycode(keycode) => key_codes.$event(keycode),
-                InputButton::MouseButton(mouse_button) => mouse_buttons.$event(mouse_button),
-            }
-        }
-    };
-}
-button_input!(pressed);
-button_input!(just_pressed);
-button_input!(just_released);
 
 pub type InventorySlot = i8;
 
@@ -68,6 +57,7 @@ pub(in crate::world) fn process_input(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     mouse_scroll: Res<AccumulatedMouseScroll>,
+    double_clicks: Res<DoubleClicks>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut player: Single<
         (
@@ -86,14 +76,10 @@ pub(in crate::world) fn process_input(
     let (attributes, inventory, selected_hotbar_slot, action_status, controller) =
         player.deref_mut();
     let prev_hotbar_selection = selected_hotbar_slot.0;
-    match () {
-        _ if just_pressed(&CONTROLS_HOTBAR_0, &keys, &mouse) => selected_hotbar_slot.0 = 0,
-        _ if just_pressed(&CONTROLS_HOTBAR_1, &keys, &mouse) => selected_hotbar_slot.0 = 1,
-        _ if just_pressed(&CONTROLS_HOTBAR_2, &keys, &mouse) => selected_hotbar_slot.0 = 2,
-        _ if just_pressed(&CONTROLS_HOTBAR_3, &keys, &mouse) => selected_hotbar_slot.0 = 3,
-        _ if just_pressed(&CONTROLS_HOTBAR_4, &keys, &mouse) => selected_hotbar_slot.0 = 4,
-        _ if just_pressed(&CONTROLS_HOTBAR_5, &keys, &mouse) => selected_hotbar_slot.0 = 5,
-        _ => {}
+    for hotbar_slot in 0..HOTBAR_SLOTS {
+        if just_pressed(&CONTROLS_HOTBARS[hotbar_slot as usize], &keys, &mouse) {
+            selected_hotbar_slot.0 = hotbar_slot;
+        }
     }
     if let MouseScrollUnit::Line = mouse_scroll.unit
         && let delta = mouse_scroll.delta.y as InventorySlot
@@ -105,15 +91,25 @@ pub(in crate::world) fn process_input(
     if prev_hotbar_selection != selected_hotbar_slot.0 {
         hotbar_selection_updated_message.write(HotbarSelectionUpdated);
     }
-    if just_pressed(&CONTROLS_SWAP_OFF_HAND, &keys, &mouse) {};
-    let using_main_hand = pressed(&CONTROLS_USE_MAIN_HAND, &keys, &mouse);
-    action_status.update_status(
-        EquipmentSlot::MainHand,
-        if using_main_hand {
+    let mut active_trigger = |slot| {
+        let button = match slot {
+            EquipmentSlot::MainHand => &CONTROLS_USE_MAIN_HAND,
+            EquipmentSlot::OffHand => &CONTROLS_USE_OFF_HAND,
+            EquipmentSlot::Armor => &CONTROLS_USE_ARMOR,
+        };
+        if double_clicks.double_clicked(*button.read().unwrap()) {
+            Some(ItemActionTrigger::DoubleClick)
+        } else if pressed(button, &keys, &mouse) {
             Some(ItemActionTrigger::Click)
         } else {
             None
-        },
+        }
+    };
+    action_status.update_status(
+        active_trigger(EquipmentSlot::MainHand),
+        /*todo*/ false,
+        active_trigger(EquipmentSlot::OffHand),
+        active_trigger(EquipmentSlot::Armor),
     );
     action_status.tick(time.delta());
     if pressed(&CONTROLS_MOVEMENT, &keys, &mouse)
@@ -253,7 +249,27 @@ impl PlayerActionStatus {
             .collect(),
         )
     }
-    fn update_status(&mut self, slot: EquipmentSlot, active_trigger: Option<ItemActionTrigger>) {
+    fn update_status(
+        &mut self,
+        main_hand_trigger: Option<ItemActionTrigger>,
+        main_single_wield: bool,
+        off_hand_trigger: Option<ItemActionTrigger>,
+        armor_trigger: Option<ItemActionTrigger>,
+    ) {
+        if self
+            .update_slot_status(EquipmentSlot::MainHand, main_hand_trigger)
+            .is_idle()
+            || main_single_wield
+        {
+            self.update_slot_status(EquipmentSlot::OffHand, off_hand_trigger);
+        }
+        self.update_slot_status(EquipmentSlot::Armor, armor_trigger);
+    }
+    fn update_slot_status(
+        &mut self,
+        slot: EquipmentSlot,
+        active_trigger: Option<ItemActionTrigger>,
+    ) -> &SlotActionStatus {
         let status = self.0.get_mut(&slot).unwrap();
         if let Some(active_trigger) = active_trigger {
             if status.is_idle() {
@@ -264,6 +280,7 @@ impl PlayerActionStatus {
                 *status = SlotActionStatus::idle();
             }
         }
+        status
     }
     fn tick(&mut self, delta: Duration) {
         for (_, action_status) in &mut self.0 {

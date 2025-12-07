@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 static ATTRIBUTES: LazyLock<HashMap<NamespacedKey, f32>> =
-    LazyLock::new(|| HashMap::from([(NamespacedKey::new("embers", "max_health"), 20f32)]));
+    LazyLock::new(|| HashMap::from([(NamespacedKey::new("embers", "max_health"), 20.)]));
 
 #[derive(Component)]
 pub struct Creeper {}

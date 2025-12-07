@@ -17,6 +17,12 @@ pub struct ItemStack {
     count: u8,
 }
 
+impl ItemStack {
+    pub fn new(id: NamespacedKey, count: u8) -> Self {
+        Self { id, count }
+    }
+}
+
 #[derive(Component)]
 pub struct RangedAmmo();
 
@@ -43,8 +49,20 @@ pub enum ItemActionTrigger {
     DoubleClick,
 }
 
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+pub enum ItemActionSlot {
+    Armor,
+    Hands(HandActionWield),
+}
+
+impl Default for ItemActionSlot {
+    fn default() -> Self {
+        Self::Hands(HandActionWield::default())
+    }
+}
+
 #[derive(Clone, Copy, Default, Eq, Hash, PartialEq)]
-pub enum ItemActionWield {
+pub enum HandActionWield {
     #[default]
     Single,
     Dual,
@@ -55,17 +73,28 @@ pub struct ItemAction {
     on_begin: fn(),
     on_end: fn(),
     trigger: ItemActionTrigger,
-    wield: ItemActionWield,
+    slot: ItemActionSlot,
     duration: f32,
+}
+
+impl Default for ItemAction {
+    fn default() -> Self {
+        Self {
+            on_begin: || (),
+            on_end: || (),
+            trigger: ItemActionTrigger::default(),
+            slot: ItemActionSlot::default(),
+            duration: f32::INFINITY,
+        }
+    }
 }
 
 #[derive(Component)]
 pub struct Weight(f32);
 
-pub fn item(id: NamespacedKey, count: u8) -> impl Bundle {
-    ItemStack { id, count }
-}
-
 pub fn sword() -> impl Bundle {
-    (item(embers::SWORD.clone(), 1), Enchantments::default())
+    (
+        ItemStack::new(embers::SWORD.clone(), 1),
+        Enchantments::default(),
+    )
 }

@@ -42,6 +42,7 @@ fn main() {
         .add_plugins(TnuaAvian3dPlugin::new(PhysicsSchedule))
         .add_plugins(ui::plugin)
         .add_plugins(utils::assets::assets_plugin)
+        .add_plugins(utils::input::input_plugin)
         .add_plugins(world::plugin)
         .add_systems(
             Startup,

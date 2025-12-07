@@ -18,7 +18,7 @@ impl Default for Time {
 
 pub struct World {
     key: NamespacedKey,
-    asset_scope: AssetScope,
+    assets: AssetScope,
 }
 impl Keyed for World {
     fn key(&self) -> &NamespacedKey {
@@ -28,12 +28,12 @@ impl Keyed for World {
 impl World {
     pub fn new(key: NamespacedKey) -> Self {
         Self {
-            asset_scope: AssetScope::new(format!("world/{}/{}", key.namespace(), key.key())),
+            assets: AssetScope::new(format!("world/{}/{}", key.namespace(), key.key())),
             key,
         }
     }
-    pub fn asset_scope(&self) -> &AssetScope {
-        &self.asset_scope
+    pub fn assets(&self) -> &AssetScope {
+        &self.assets
     }
 }
 

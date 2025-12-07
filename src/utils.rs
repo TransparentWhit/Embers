@@ -1,12 +1,25 @@
 pub mod assets;
+pub mod input;
 
 use bevy::asset::uuid::Uuid;
 use bevy::prelude::*;
 use regex::Regex;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::hash::{BuildHasherDefault, DefaultHasher};
 use std::result::Result;
 use std::sync::LazyLock;
 use thiserror::Error;
+
+pub type ConstHashMap<K, V> = HashMap<K, V, BuildHasherDefault<DefaultHasher>>;
+pub const fn const_hash_map<K, V>() -> ConstHashMap<K, V> {
+    HashMap::with_hasher(BuildHasherDefault::new())
+}
+
+pub type ConstHashSet<T> = HashSet<T, BuildHasherDefault<DefaultHasher>>;
+pub const fn const_hash_set<T>() -> ConstHashSet<T> {
+    HashSet::with_hasher(BuildHasherDefault::new())
+}
 
 #[macro_export]
 macro_rules! identify {

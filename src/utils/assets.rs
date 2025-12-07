@@ -1,10 +1,8 @@
 use crate::GameState;
-use crate::utils::{Namespaced, NamespacedKey};
+use crate::utils::{ConstHashSet, Namespaced, NamespacedKey, const_hash_set};
 use bevy::app::App;
 use bevy::asset::{AssetPath, LoadedFolder};
 use bevy::prelude::*;
-use std::collections::HashSet;
-use std::hash::{BuildHasherDefault, DefaultHasher};
 use std::sync::{LazyLock, Mutex};
 
 #[derive(Eq, PartialEq, Hash, Clone)]
@@ -129,8 +127,7 @@ pub enum AssetUnloadRequest {
     Scope(&'static AssetScope),
 }
 
-static LOADED_ASSETS: Mutex<HashSet<UntypedHandle, BuildHasherDefault<DefaultHasher>>> =
-    Mutex::new(HashSet::with_hasher(BuildHasherDefault::new()));
+static LOADED_ASSETS: Mutex<ConstHashSet<UntypedHandle>> = Mutex::new(const_hash_set());
 
 fn asset_load_request_listener(
     mut requests: MessageReader<AssetLoadRequest>,
@@ -171,7 +168,7 @@ fn folder_loaded_listener(
     }
 }
 
-pub fn assets_plugin(app: &mut App) {
+pub(crate) fn assets_plugin(app: &mut App) {
     app.add_message::<AssetLoadRequest>()
         .add_message::<AssetUnloadRequest>()
         .add_message::<AssetLoadedMessage>()

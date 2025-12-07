@@ -1,5 +1,6 @@
 pub mod attributes;
 pub mod creeper;
+pub mod dummy;
 pub mod player;
 
 use super::entity;
