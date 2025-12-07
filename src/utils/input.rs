@@ -165,5 +165,276 @@ fn track_double_clicks(
 }
 
 pub(crate) fn input_plugin(app: &mut App) {
-    app.add_systems(PreUpdate, track_double_clicks);
+    app.insert_resource(DoubleClicks::default())
+        .add_systems(PreUpdate, track_double_clicks);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Copy, Clone, Eq, PartialEq, Hash)]
+    enum DummyInput {
+        Input1,
+        Input2,
+    }
+
+    impl From<DummyInput> for InputButton {
+        fn from(input: DummyInput) -> Self {
+            match input {
+                DummyInput::Input1 => InputButton::Keycode(KeyCode::KeyQ),
+                DummyInput::Input2 => InputButton::MouseButton(MouseButton::Left),
+            }
+        }
+    }
+
+    #[test]
+    fn test_double_clicked() {
+        let mut double_clicks = DoubleClicks::default();
+        let input = DummyInput::Input1.into();
+        double_clicks.clicks.insert(input, Stopwatch::new());
+        double_clicks.clicks.get_mut(&input).unwrap().reset();
+        double_clicks.double_clicked.insert(input);
+        assert!(double_clicks.double_clicked(input));
+        assert!(!double_clicks.double_clicked(DummyInput::Input2.into()));
+    }
+
+    #[test]
+    fn getting_double_clicked() {
+        let mut double_clicks = DoubleClicks::default();
+        let input1 = DummyInput::Input1.into();
+        let input2 = DummyInput::Input2.into();
+        double_clicks.double_clicked.insert(input1);
+        double_clicks.double_clicked.insert(input2);
+        let double_clicked = double_clicks.get_double_clicked();
+        assert_eq!(double_clicked.len(), 2);
+        for clicked_input in double_clicked {
+            assert!(double_clicks.double_clicked.contains(clicked_input));
+        }
+    }
+
+    #[test]
+    fn test_any_double_clicked() {
+        let mut double_clicks = DoubleClicks::default();
+        let input1 = DummyInput::Input1.into();
+        let input2 = DummyInput::Input2.into();
+        double_clicks.double_clicked.insert(input1);
+        assert!(double_clicks.any_double_clicked([input1]));
+        assert!(!double_clicks.any_double_clicked([input2]));
+        assert!(double_clicks.any_double_clicked([input1, input2]));
+    }
+
+    #[test]
+    fn test_all_double_clicked() {
+        let mut double_clicks = DoubleClicks::default();
+        let input1 = DummyInput::Input1.into();
+        let input2 = DummyInput::Input2.into();
+        double_clicks.double_clicked.insert(input1);
+        assert!(double_clicks.all_double_clicked([input1]));
+        assert!(!double_clicks.all_double_clicked([input1, input2]));
+        double_clicks.double_clicked.insert(input2);
+        assert!(double_clicks.all_double_clicked([input1, input2]));
+    }
+
+    #[test]
+    fn test_just_started() {
+        let mut double_clicks = DoubleClicks::default();
+        let input = DummyInput::Input1.into();
+        assert!(!double_clicks.just_started(input));
+        double_clicks.just_started.insert(input);
+        assert!(double_clicks.just_started(input));
+    }
+
+    #[test]
+    fn getting_just_started() {
+        let mut double_clicks = DoubleClicks::default();
+        let input1 = DummyInput::Input1.into();
+        let input2 = DummyInput::Input2.into();
+        double_clicks.just_started.insert(input1);
+        double_clicks.just_started.insert(input2);
+        let just_started = double_clicks.get_just_started();
+        assert_eq!(just_started.len(), 2);
+        for started_input in just_started {
+            assert!(double_clicks.just_started.contains(started_input));
+        }
+    }
+
+    #[test]
+    fn clearing_just_started() {
+        let mut double_clicks = DoubleClicks::default();
+        let input = DummyInput::Input1.into();
+        double_clicks.just_started.insert(input);
+        assert!(double_clicks.just_started(input));
+        assert!(double_clicks.clear_just_started(input));
+        assert!(!double_clicks.just_started(input));
+        assert!(!double_clicks.clear_just_started(input));
+    }
+
+    #[test]
+    fn test_any_just_started() {
+        let mut double_clicks = DoubleClicks::default();
+        let input1 = DummyInput::Input1.into();
+        let input2 = DummyInput::Input2.into();
+        assert!(!double_clicks.any_just_started([input1]));
+        assert!(!double_clicks.any_just_started([input2]));
+        assert!(!double_clicks.any_just_started([input1, input2]));
+        double_clicks.just_started.insert(input1);
+        assert!(double_clicks.any_just_started([input1]));
+        assert!(!double_clicks.any_just_started([input2]));
+        assert!(double_clicks.any_just_started([input1, input2]));
+    }
+
+    #[test]
+    fn test_all_just_started() {
+        let mut double_clicks = DoubleClicks::default();
+        let input1 = DummyInput::Input1.into();
+        let input2 = DummyInput::Input2.into();
+        assert!(!double_clicks.all_just_started([input1]));
+        assert!(!double_clicks.all_just_started([input2]));
+        assert!(!double_clicks.all_just_started([input1, input2]));
+        double_clicks.just_started.insert(input1);
+        assert!(double_clicks.all_just_started([input1]));
+        assert!(!double_clicks.all_just_started([input1, input2]));
+        double_clicks.just_started.insert(input2);
+        assert!(double_clicks.all_just_started([input1, input2]));
+    }
+
+    #[test]
+    fn test_just_ended() {
+        let mut double_clicks = DoubleClicks::default();
+        let input = DummyInput::Input1.into();
+        assert!(!double_clicks.just_ended(input));
+        double_clicks.just_ended.insert(input);
+        assert!(double_clicks.just_ended(input));
+    }
+
+    #[test]
+    fn getting_just_ended() {
+        let mut double_clicks = DoubleClicks::default();
+        let input1 = DummyInput::Input1.into();
+        let input2 = DummyInput::Input2.into();
+        double_clicks.just_ended.insert(input1);
+        double_clicks.just_ended.insert(input2);
+        let just_ended = double_clicks.get_just_ended();
+        assert_eq!(just_ended.len(), 2);
+        for ended_input in just_ended {
+            assert!(double_clicks.just_ended.contains(ended_input));
+        }
+    }
+
+    #[test]
+    fn clearing_just_ended() {
+        let mut double_clicks = DoubleClicks::default();
+        let input = DummyInput::Input1.into();
+        double_clicks.just_ended.insert(input);
+        assert!(double_clicks.just_ended(input));
+        assert!(double_clicks.clear_just_ended(input));
+        assert!(!double_clicks.just_ended(input));
+        assert!(!double_clicks.clear_just_ended(input));
+    }
+
+    #[test]
+    fn test_any_just_ended() {
+        let mut double_clicks = DoubleClicks::default();
+        let input1 = DummyInput::Input1.into();
+        let input2 = DummyInput::Input2.into();
+        assert!(!double_clicks.any_just_ended([input1]));
+        assert!(!double_clicks.any_just_ended([input2]));
+        assert!(!double_clicks.any_just_ended([input1, input2]));
+        double_clicks.just_ended.insert(input1);
+        assert!(double_clicks.any_just_ended([input1]));
+        assert!(!double_clicks.any_just_ended([input2]));
+        assert!(double_clicks.any_just_ended([input1, input2]));
+    }
+
+    #[test]
+    fn test_all_just_ended() {
+        let mut double_clicks = DoubleClicks::default();
+        let input1 = DummyInput::Input1.into();
+        let input2 = DummyInput::Input2.into();
+        assert!(!double_clicks.all_just_ended([input1]));
+        assert!(!double_clicks.all_just_ended([input2]));
+        assert!(!double_clicks.all_just_ended([input1, input2]));
+        double_clicks.just_ended.insert(input1);
+        assert!(double_clicks.all_just_ended([input1]));
+        assert!(!double_clicks.all_just_ended([input1, input2]));
+        double_clicks.just_ended.insert(input2);
+        assert!(double_clicks.all_just_ended([input1, input2]));
+    }
+
+    #[test]
+    fn releasing_all() {
+        let mut double_clicks = DoubleClicks::default();
+        let input1 = DummyInput::Input1.into();
+        let input2 = DummyInput::Input2.into();
+        double_clicks.double_clicked.insert(input1);
+        double_clicks.double_clicked.insert(input2);
+        double_clicks.release_all();
+        assert!(double_clicks.double_clicked.is_empty());
+        assert!(double_clicks.just_ended.contains(&input1));
+        assert!(double_clicks.just_ended.contains(&input2));
+    }
+
+    #[test]
+    fn clearing() {
+        let mut double_clicks = DoubleClicks::default();
+        let input1 = DummyInput::Input1.into();
+        let input2 = DummyInput::Input2.into();
+        double_clicks.just_started.insert(input1);
+        double_clicks.just_ended.insert(input2);
+        double_clicks.double_clicked.insert(input1);
+        double_clicks.clear();
+        assert!(double_clicks.just_started.is_empty());
+        assert!(double_clicks.just_ended.is_empty());
+        assert!(double_clicks.double_clicked.contains(&input1));
+    }
+
+    #[test]
+    fn ticking() {
+        let mut double_clicks = DoubleClicks::default();
+        let input = DummyInput::Input1.into();
+        let mut stopwatch = Stopwatch::new();
+        stopwatch.tick(Duration::from_millis(100));
+        double_clicks.clicks.insert(input, stopwatch);
+        double_clicks.tick(Duration::from_millis(150));
+        assert!(double_clicks.clicks.contains_key(&input));
+        double_clicks.tick(Duration::from_millis(200));
+        assert!(!double_clicks.clicks.contains_key(&input));
+    }
+
+    #[test]
+    fn general_double_clicking() {
+        let mut double_clicks = DoubleClicks::default();
+        let input1 = DummyInput::Input1.into();
+        let input2 = DummyInput::Input2.into();
+        double_clicks.clicks.insert(input1, Stopwatch::new());
+        double_clicks.clicks.get_mut(&input1).unwrap().reset();
+        double_clicks.double_clicked.insert(input1);
+        double_clicks.just_started.insert(input1);
+        assert!(double_clicks.double_clicked(input1));
+        assert!(double_clicks.just_started(input1));
+        assert!(!double_clicks.just_ended(input1));
+        double_clicks.clear();
+        assert!(!double_clicks.just_started(input1));
+        assert!(double_clicks.double_clicked(input1));
+        double_clicks.double_clicked.remove(&input1);
+        double_clicks.just_ended.insert(input1);
+        assert!(!double_clicks.double_clicked(input1));
+        assert!(double_clicks.just_ended(input1));
+        double_clicks.clear();
+        assert!(!double_clicks.just_ended(input1));
+        double_clicks.double_clicked.insert(input1);
+        double_clicks.double_clicked.insert(input2);
+        double_clicks.just_started.insert(input1);
+        double_clicks.just_started.insert(input2);
+        assert!(double_clicks.all_double_clicked([input1, input2]));
+        assert!(double_clicks.all_just_started([input1, input2]));
+        double_clicks.clear_just_started(input1);
+        assert!(!double_clicks.just_started(input1));
+        assert!(double_clicks.just_started(input2));
+        double_clicks.release_all();
+        assert!(double_clicks.double_clicked.is_empty());
+        assert!(double_clicks.just_ended.contains(&input1));
+        assert!(double_clicks.just_ended.contains(&input2));
+    }
 }

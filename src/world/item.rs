@@ -1,3 +1,4 @@
+use std::sync::OnceLock;
 use crate::utils::NamespacedKey;
 use bevy::prelude::*;
 
@@ -9,6 +10,26 @@ pub mod embers {
         };
     }
     item!(SWORD, "sword");
+}
+
+pub type InventorySlot = i8;
+
+#[derive(Component)]
+pub struct InventoryItem;
+
+#[derive(Component)]
+pub struct Inventory<const N: usize>([Option<OnceLock<Entity>>; N]);
+
+impl<const N: usize> Default for Inventory<N> {
+    fn default() -> Self {
+        Self([const { None }; N])
+    }
+}
+
+impl<const N: usize> Inventory<N> {
+    pub fn new() -> Self {
+        Default::default()
+    }
 }
 
 #[derive(Clone, Component)]
@@ -70,11 +91,11 @@ pub enum HandActionWield {
 
 #[derive(Component)]
 pub struct ItemAction {
-    on_begin: fn(),
-    on_end: fn(),
-    trigger: ItemActionTrigger,
-    slot: ItemActionSlot,
-    duration: f32,
+    pub on_begin: fn(),
+    pub on_end: fn(),
+    pub trigger: ItemActionTrigger,
+    pub slot: ItemActionSlot,
+    pub duration: f32,
 }
 
 impl Default for ItemAction {
