@@ -1,0 +1,29 @@
+name: Build Embers
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain: [ stable ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lld clang
+      - name: Build
+        run: cargo build --verbose
+      - name: Test
+        run: cargo test --verbose
