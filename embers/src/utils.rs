@@ -21,35 +21,6 @@ pub const fn const_hash_set<T>() -> ConstHashSet<T> {
     HashSet::with_hasher(BuildHasherDefault::new())
 }
 
-#[macro_export]
-macro_rules! identify {
-    ($identified: ty, $identifier: ident) => {
-        impl std::cmp::PartialEq for $identified {
-            fn eq(&self, other: &Self) -> bool {
-                self.$identifier() == other.$identifier()
-            }
-        }
-        impl std::cmp::Eq for $identified {}
-        impl std::hash::Hash for $identified {
-            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-                self.$identifier().hash(state);
-            }
-        }
-    };
-}
-#[macro_export]
-macro_rules! uniquely_identify {
-    ($uniquely_identified: ty) => {
-        $crate::identify!($uniquely_identified, unique_id);
-    };
-}
-#[macro_export]
-macro_rules! key_identify {
-    ($key_identified: ty) => {
-        $crate::identify!($key_identified, key);
-    };
-}
-
 pub trait Named {
     fn name(&self) -> &str;
 }
@@ -176,9 +147,9 @@ impl fmt::Display for NamespacedKey {
         write!(formatter, "{}", self.namespaced_key)
     }
 }
-impl Into<String> for NamespacedKey {
-    fn into(self) -> String {
-        self.namespaced_key
+impl From<NamespacedKey> for String {
+    fn from(value: NamespacedKey) -> Self {
+        value.namespaced_key
     }
 }
 impl TryFrom<&str> for NamespacedKey {

@@ -1,5 +1,11 @@
-[package]
-name = "Embers"
+[workspace]
+members = [
+    "embers",
+    "embers-macros",
+]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
 authors = ["Maxsh001"]
 edition = "2024"
@@ -12,14 +18,17 @@ opt-level = 3
 codegen-units = 1
 lto = "thin"
 
-[dependencies]
-bevy = { version = "0.17", features = ["dynamic_linking"] }
+[workspace.dependencies]
 avian3d = "0.4"
+bevy = { version = "0.17", features = ["dynamic_linking"] }
 bevy-tnua = "0.26"
 bevy-tnua-avian3d = "0.8"
-winit = { version = "0.30", default-features = false }
 image = { version = "0.25", default-features = false }
+winit = { version = "0.30", default-features = false }
 duplicate = "2.0"
-regex = "1.12"
 rand = "0.9"
+regex = "1.12"
 thiserror = "2.0"
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+quote = "1.0"
+proc-macro2 = "1.0"

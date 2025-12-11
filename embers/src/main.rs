@@ -10,8 +10,10 @@ use bevy::prelude::*;
 use bevy::winit::WINIT_WINDOWS;
 use bevy_tnua::prelude::TnuaControllerPlugin;
 use bevy_tnua_avian3d::TnuaAvian3dPlugin;
-use std::path::MAIN_SEPARATOR;
+use std::path::MAIN_SEPARATOR_STR;
 use winit::window::Icon;
+
+pub const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
 #[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 enum GameState {
@@ -30,7 +32,7 @@ fn main() {
         .add_plugins(
             DefaultPlugins
                 .set(AssetPlugin {
-                    file_path: format!("res{}assets", MAIN_SEPARATOR),
+                    file_path: ["..", "res", "assets"].join(MAIN_SEPARATOR_STR),
                     ..default()
                 })
                 .set(ImagePlugin {

@@ -3,7 +3,9 @@ use crate::ui::world::{HotbarSelectionUpdated, PlayerCamera};
 use crate::utils::NamespacedKey;
 use crate::utils::input::{DoubleClicks, InputButton, just_pressed, pressed};
 use crate::world::entity::living::attributes::embers;
-use crate::world::item::{HandActionWield, InventorySlot, ItemAction, ItemActionSlot, ItemActionTrigger};
+pub(crate) use crate::world::item::{
+    HandActionWield, InventorySlot, ItemAction, ItemActionSlot, ItemActionTrigger,
+};
 use avian3d::prelude::*;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
@@ -169,19 +171,19 @@ pub(in crate::world) fn process_input(
     update_slot_action(
         action_status,
         EquipmentSlot::OffHand,
-        if match main_hand_action {
+        if matches!(
+            main_hand_action,
             Some(ItemAction {
                 slot: ItemActionSlot::Hands(HandActionWield::Single),
                 ..
-            }) => true,
-            _ => false,
-        } && match off_hand_action {
+            })
+        ) && matches!(
+            off_hand_action,
             Some(ItemAction {
                 slot: ItemActionSlot::Hands(HandActionWield::Single),
                 ..
-            }) => true,
-            _ => false,
-        } && main_hand_active
+            })
+        ) && main_hand_active
         {
             active_item_trigger(&CONTROLS_USE_OFF_HAND, &double_clicks, &keys, &mouse)
         } else {
@@ -271,7 +273,7 @@ impl Default for PlayerInventory {
 
 impl PlayerInventory {
     const ARMOR_SLOT: InventorySlot = 36;
-    const OFFHAND_SLOT: InventorySlot = 37;
+    const MAIN_HAND_SLOT: InventorySlot = 37;
 }
 
 #[derive(Component)]
@@ -337,7 +339,7 @@ impl PlayerActionStatus {
         )
     }
     fn tick(&mut self, delta: Duration) {
-        for (_, action_status) in &mut self.0 {
+        for action_status in self.0.values_mut() {
             if let SlotActionStatus::Active { timer, .. } = action_status {
                 timer.tick(delta);
             }

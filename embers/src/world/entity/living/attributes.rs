@@ -1,5 +1,5 @@
-use crate::key_identify;
 use crate::utils::{Keyed, NamespacedKey};
+use embers_macros::identify;
 use std::collections::HashSet;
 
 pub mod embers {
@@ -13,6 +13,7 @@ pub mod embers {
     attribute!(MOVEMENT_SPEED, "movement_speed");
 }
 
+#[identify(key)]
 pub struct AttributeInstance {
     pub(super) key: NamespacedKey,
     pub base: f32,
@@ -38,8 +39,8 @@ impl Keyed for AttributeInstance {
         &self.key
     }
 }
-key_identify!(AttributeInstance);
 
+#[identify(key)]
 pub struct AttributeModifier {
     key: NamespacedKey,
     modification: AttributeModification,
@@ -57,7 +58,6 @@ impl Keyed for AttributeModifier {
         &self.key
     }
 }
-key_identify!(AttributeModifier);
 
 pub enum AttributeModification {
     AddValue(f32),

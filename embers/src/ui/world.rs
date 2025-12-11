@@ -3,7 +3,7 @@ use crate::ui::{ScalableComponent, UIScale, scalable};
 use crate::utils::assets::GLOBAL_ASSETS;
 use crate::world::entity::living::dummy::dummy;
 use crate::world::entity::living::player::{
-    HOTBAR_SLOTS, InventorySlot, Player, SelectedHotbarSlot, player,
+    HOTBAR_SLOTS, InventorySlot, Player, PlayerInventory, SelectedHotbarSlot, player,
 };
 use crate::world::entity::tnt::tnt;
 use avian3d::prelude::*;
@@ -12,6 +12,7 @@ use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowResized};
 use std::ops::DerefMut;
+use std::sync::OnceLock;
 
 #[derive(States, Clone, Copy, Default, Eq, PartialEq, Debug, Hash)]
 enum WorldState {
@@ -252,7 +253,17 @@ fn update_hotbar_selection(
 }
 
 pub(super) fn plugin(app: &mut App) {
-    app.add_systems(OnEnter(GameState::World), (init, resize_camera).chain());
+    app.add_systems(
+        OnEnter(GameState::World),
+        (
+            init,
+            resize_camera,
+            |mut commands: Commands, mut player: Single<&mut PlayerInventory, With<Player>>| {
+                player.items[0] = Some(OnceLock::new());
+            },
+        )
+            .chain(),
+    );
     app.add_systems(Update, resize_camera.run_if(on_message::<WindowResized>));
     app.add_systems(Update, update_player_camera);
     app.add_message::<HotbarSelectionUpdated>();

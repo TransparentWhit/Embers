@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  format:
+    name: Check formatting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Format
+        run: cargo fmt --check
+  lint_test:
+    name: Lint and Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwayland-dev lld clang
+          rustup component add clippy
+      - name: Lint
+        run: cargo clippy --all-targets --all-features
+      - name: Test
+        run: cargo test --verbose
+  lint_build_release:
+    name: Lint and Build (Release)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwayland-dev lld clang
+          rustup component add clippy
+      - name: Lint
+        run: cargo clippy --all-targets --all-features --release
+      - name: Build
+        run: cargo build --verbose --release
