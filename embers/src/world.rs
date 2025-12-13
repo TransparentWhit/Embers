@@ -42,6 +42,7 @@ pub static LOBBY: LazyLock<World> =
 
 pub(super) fn plugin(app: &mut App) {
     app.add_plugins(entity::plugin);
+    app.add_plugins(item::plugin);
     app.add_systems(
         Update,
         entity::living::player::process_input.run_if(in_state(GameState::World)),

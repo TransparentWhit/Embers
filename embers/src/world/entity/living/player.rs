@@ -3,9 +3,9 @@ use crate::ui::world::{HotbarSelectionUpdated, PlayerCamera};
 use crate::utils::NamespacedKey;
 use crate::utils::input::{DoubleClicks, InputButton, just_pressed, pressed};
 use crate::world::entity::living::attributes::embers;
-pub(crate) use crate::world::item::{
-    HandActionWield, InventorySlot, ItemAction, ItemActionSlot, ItemActionTrigger,
-};
+use crate::world::item::inventory::{Inventory, InventorySlot};
+use crate::world::item::{HandActionWield, ItemAction, ItemActionTrigger, ItemActionWield};
+use crate::world::item::{ItemActionSlot, ItemActions};
 use avian3d::prelude::*;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
@@ -16,7 +16,7 @@ use bevy_tnua::prelude::*;
 use std::collections::HashMap;
 use std::iter::repeat;
 use std::ops::DerefMut;
-use std::sync::{LazyLock, OnceLock, RwLock};
+use std::sync::{LazyLock, RwLock};
 use std::time::Duration;
 
 macro_rules! controls {
@@ -72,9 +72,9 @@ pub(in crate::world) fn process_input(
         With<Player>,
     >,
     player_camera: Single<(&Camera, &PlayerCamera), With<PlayerCamera>>,
+    item_actions: Query<&ItemActions>,
     mut hotbar_selection_updated_message: MessageWriter<HotbarSelectionUpdated>,
     time: Res<Time>,
-    item_actions: Query<&ItemAction>,
 ) {
     let (attributes, inventory, selected_hotbar_slot, action_status, controller) =
         player.deref_mut();
@@ -153,14 +153,14 @@ pub(in crate::world) fn process_input(
             }
         }
     }
-    let main_hand_action = inventory.items[selected_hotbar_slot.0 as usize]
+    let main_hand_action = inventory[PlayerInventory::MAIN_HAND_SLOT]
         .as_ref()
-        .and_then(|lock| lock.get())
-        .and_then(|entity| item_actions.get(*entity).ok());
-    let off_hand_action = inventory.items[36]
+        .and_then(|entity| item_actions.get(*entity).ok())
+        .and_then(|actions| actions.get(ItemActionSlot::Hands));
+    let off_hand_action = inventory[selected_hotbar_slot.0]
         .as_ref()
-        .and_then(|lock| lock.get())
-        .and_then(|entity| item_actions.get(*entity).ok());
+        .and_then(|entity| item_actions.get(*entity).ok())
+        .and_then(|actions| actions.get(ItemActionSlot::Hands));
     update_slot_action(
         action_status,
         EquipmentSlot::MainHand,
@@ -174,13 +174,13 @@ pub(in crate::world) fn process_input(
         if matches!(
             main_hand_action,
             Some(ItemAction {
-                slot: ItemActionSlot::Hands(HandActionWield::Single),
+                wield: ItemActionWield::Hands(HandActionWield::Single),
                 ..
             })
         ) && matches!(
             off_hand_action,
             Some(ItemAction {
-                slot: ItemActionSlot::Hands(HandActionWield::Single),
+                wield: ItemActionWield::Hands(HandActionWield::Single),
                 ..
             })
         ) && main_hand_active
@@ -258,18 +258,7 @@ pub struct Player {
 
 pub const HOTBAR_SLOTS: InventorySlot = 6;
 
-#[derive(Component)]
-pub struct PlayerInventory {
-    pub items: [Option<OnceLock<Entity>>; 38],
-}
-
-impl Default for PlayerInventory {
-    fn default() -> Self {
-        Self {
-            items: [const { None }; 38],
-        }
-    }
-}
+pub type PlayerInventory = Inventory<38>;
 
 impl PlayerInventory {
     const ARMOR_SLOT: InventorySlot = 36;
@@ -351,7 +340,7 @@ pub fn player() -> impl Bundle {
     (
         living_entity(&ATTRIBUTES),
         Collider::cylinder(0.5, 1.7),
-        PlayerInventory::default(),
+        PlayerInventory::new(),
         SelectedHotbarSlot::default(),
         PlayerActionStatus::new(),
         Player {

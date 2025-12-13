@@ -1,3 +1,4 @@
+pub mod registry;
 mod ui;
 pub mod utils;
 pub mod world;
@@ -13,7 +14,7 @@ use bevy_tnua_avian3d::TnuaAvian3dPlugin;
 use std::path::MAIN_SEPARATOR_STR;
 use winit::window::Icon;
 
-pub const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 enum GameState {

@@ -1,4 +1,4 @@
-mod item_entity;
+pub mod item_entity;
 pub mod living;
 pub mod projectile;
 pub mod tnt;
