@@ -15,6 +15,7 @@ use bevy_tnua::builtins::TnuaBuiltinDash;
 use bevy_tnua::prelude::*;
 use std::collections::HashMap;
 use std::iter::repeat;
+use std::marker::PhantomData;
 use std::ops::DerefMut;
 use std::sync::{LazyLock, RwLock};
 use std::time::Duration;
@@ -258,7 +259,7 @@ pub struct Player {
 
 pub const HOTBAR_SLOTS: InventorySlot = 6;
 
-pub type PlayerInventory = Inventory<38>;
+pub type PlayerInventory = Inventory<38, PhantomData<Player>>;
 
 impl PlayerInventory {
     const ARMOR_SLOT: InventorySlot = 36;

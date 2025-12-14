@@ -1,18 +1,22 @@
 use crate::GameState;
 use crate::ui::{ScalableComponent, UIScale, scalable};
 use crate::utils::assets::GLOBAL_ASSETS;
+use crate::world::entity::item_entity::{ItemEntity, item_entity};
 use crate::world::entity::living::dummy::dummy;
 use crate::world::entity::living::player::{
-    HOTBAR_SLOTS, InventorySlot, Player, PlayerInventory, SelectedHotbarSlot, player,
+    HOTBAR_SLOTS, Player, PlayerInventory, SelectedHotbarSlot, player,
 };
 use crate::world::entity::tnt::tnt;
+use crate::world::item::inventory::{
+    InventorySlot, ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt,
+};
+use crate::world::item::sword;
 use avian3d::prelude::*;
 use bevy::camera::{ScalingMode, Viewport};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowResized};
 use std::ops::DerefMut;
-use std::sync::OnceLock;
 
 #[derive(States, Clone, Copy, Default, Eq, PartialEq, Debug, Hash)]
 enum WorldState {
@@ -255,14 +259,26 @@ fn update_hotbar_selection(
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(
         OnEnter(GameState::World),
-        (
-            init,
-            resize_camera,
-            |mut commands: Commands, mut player: Single<&mut PlayerInventory, With<Player>>| {
-                player.items[0] = Some(OnceLock::new());
-            },
-        )
+        (init, resize_camera, |mut commands: Commands| {
+            let sword = commands.spawn(sword()).id();
+            commands.spawn(item_entity(sword)).add_child(sword);
+        })
             .chain(),
+    );
+    app.add_systems(
+        Update,
+        |mut commands: Commands,
+         mut player_inv: Single<(Entity, &PlayerInventory)>,
+         item_entities: Query<Entity, (With<ItemEntity>, Without<PlayerInventory>)>| {
+            let (inv_entity, inv) = player_inv.deref_mut();
+            for item_entity in item_entities.iter() {
+                commands.move_item(
+                    ItemSource::item_entity(item_entity),
+                    ItemDestination::inventory_range(*inv_entity, 0..3, inv),
+                    ItemMoveQuantity::All,
+                );
+            }
+        },
     );
     app.add_systems(Update, resize_camera.run_if(on_message::<WindowResized>));
     app.add_systems(Update, update_player_camera);

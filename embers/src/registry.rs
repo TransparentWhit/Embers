@@ -53,15 +53,15 @@ impl<T: ?Sized + Send + Sync + 'static> DynamicRegistry<T> {
     pub fn contains(&self, key: &NamespacedKey) -> bool {
         self.entries.contains_key(key)
     }
-    pub fn get(&self, key: &NamespacedKey) -> Option<&Box<T>> {
+    pub fn get(&self, key: &NamespacedKey) -> Option<&T> {
         self.entries
             .get(key)
-            .map(|boxed| boxed.downcast_ref().unwrap())
+            .map(|boxed| *boxed.downcast_ref().unwrap())
     }
-    pub fn iter(&self) -> impl Iterator<Item = &Box<T>> {
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.entries
             .values()
-            .map(|boxed| boxed.downcast_ref().unwrap())
+            .map(|boxed| *boxed.downcast_ref().unwrap())
     }
     pub fn register(&mut self, key: NamespacedKey, entry: &'static T) -> Result<(), RegistryError> {
         if self.entries.contains_key(&key) {

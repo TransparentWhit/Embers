@@ -149,7 +149,7 @@ pub fn sword() -> impl Bundle {
 }
 
 pub trait ItemComponent: Send + Sync {
-    fn can_stack(&self, world: &World, a: Entity, b: Entity) -> bool;
+    fn can_stack(&self, a: EntityRef, b: EntityRef) -> bool;
 }
 
 impl DynamicRegistry<dyn ItemComponent> {
@@ -159,8 +159,8 @@ impl DynamicRegistry<dyn ItemComponent> {
     ) -> Result<(), RegistryError> {
         struct DefaultItemComponent<C: Component + PartialEq>(PhantomData<C>);
         impl<C: Component + PartialEq> ItemComponent for DefaultItemComponent<C> {
-            fn can_stack(&self, world: &World, a: Entity, b: Entity) -> bool {
-                match (world.entity(a).get::<C>(), world.entity(b).get::<C>()) {
+            fn can_stack(&self, a: EntityRef, b: EntityRef) -> bool {
+                match (a.get::<C>(), b.get::<C>()) {
                     (Some(a), Some(b)) => a == b,
                     (None, None) => true,
                     _ => false,

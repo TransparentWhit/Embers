@@ -11,6 +11,10 @@ use std::result::Result;
 use std::sync::LazyLock;
 use thiserror::Error;
 
+pub trait Marker: Clone + Send + Sync + 'static {}
+
+impl<T: Clone + Send + Sync + 'static> Marker for T {}
+
 pub type ConstHashMap<K, V> = HashMap<K, V, BuildHasherDefault<DefaultHasher>>;
 pub const fn const_hash_map<K, V>() -> ConstHashMap<K, V> {
     HashMap::with_hasher(BuildHasherDefault::new())
