@@ -6,7 +6,7 @@ pub mod tnt;
 use crate::GameState;
 use bevy::prelude::*;
 
-#[derive(Component)]
+#[derive(Component, Debug)]
 pub struct Entity;
 
 pub fn entity() -> impl Bundle {

@@ -18,7 +18,7 @@ pub mod embers {
     item!(SWORD, "sword");
 }
 
-#[derive(Component, Clone, Eq, Hash, PartialEq)]
+#[derive(Component, Clone, Debug, Eq, Hash, PartialEq)]
 #[require(StackCount)]
 pub struct ItemStack(NamespacedKey);
 
@@ -28,7 +28,7 @@ impl ItemStack {
     }
 }
 
-#[derive(Component, Clone, Eq, Hash, PartialEq)]
+#[derive(Component, Clone, Debug, Eq, Hash, PartialEq)]
 pub struct StackCount(u8);
 
 impl Default for StackCount {
@@ -37,10 +37,10 @@ impl Default for StackCount {
     }
 }
 
-#[derive(Component, Clone, Eq, Hash, PartialEq)]
+#[derive(Component, Clone, Debug, Eq, Hash, PartialEq)]
 pub struct RangedAmmo();
 
-#[derive(Component, Clone, Eq, Hash, PartialEq)]
+#[derive(Component, Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Enchantments();
 
 impl Default for Enchantments {
@@ -49,7 +49,7 @@ impl Default for Enchantments {
     }
 }
 
-#[derive(Component, Clone, Eq, Hash, PartialEq)]
+#[derive(Component, Clone, Debug, Eq, Hash, PartialEq)]
 pub struct MaxStackSize(u8);
 
 impl Default for MaxStackSize {
@@ -58,20 +58,20 @@ impl Default for MaxStackSize {
     }
 }
 
-#[derive(Clone, Copy, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum ItemActionTrigger {
     #[default]
     Click,
     DoubleClick,
 }
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ItemActionSlot {
     Armor,
     Hands,
 }
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ItemActionWield {
     Armor,
     Hands(HandActionWield),
@@ -92,14 +92,14 @@ impl ItemActionWield {
     }
 }
 
-#[derive(Clone, Copy, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum HandActionWield {
     #[default]
     Single,
     Dual,
 }
 
-#[derive(Component, Clone)]
+#[derive(Component, Clone, Debug)]
 #[identify(key)]
 pub struct ItemAction {
     key: NamespacedKey,
@@ -110,7 +110,7 @@ pub struct ItemAction {
     pub duration: Duration,
 }
 
-#[derive(Component, Clone, Eq, PartialEq)]
+#[derive(Component, Clone, Debug, Eq, PartialEq)]
 pub struct ItemActions(HashMap<ItemActionSlot, ItemAction>);
 
 impl ItemActions {
@@ -126,7 +126,7 @@ impl ItemActions {
     }
 }
 
-#[derive(Component)]
+#[derive(Component, Debug)]
 pub struct Weight(f32);
 
 pub fn sword() -> impl Bundle {

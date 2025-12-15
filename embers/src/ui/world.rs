@@ -13,6 +13,7 @@ use crate::world::item::inventory::{
 use crate::world::item::sword;
 use avian3d::prelude::*;
 use bevy::camera::{ScalingMode, Viewport};
+use bevy::input::keyboard::KeyboardInput;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowResized};
@@ -267,9 +268,9 @@ pub(super) fn plugin(app: &mut App) {
     );
     app.add_systems(
         Update,
-        |mut commands: Commands,
-         mut player_inv: Single<(Entity, &PlayerInventory)>,
-         item_entities: Query<Entity, (With<ItemEntity>, Without<PlayerInventory>)>| {
+        (|mut commands: Commands,
+          mut player_inv: Single<(Entity, &PlayerInventory)>,
+          item_entities: Query<Entity, (With<ItemEntity>, Without<PlayerInventory>)>| {
             let (inv_entity, inv) = player_inv.deref_mut();
             for item_entity in item_entities.iter() {
                 commands.move_item(
@@ -278,7 +279,8 @@ pub(super) fn plugin(app: &mut App) {
                     ItemMoveQuantity::All,
                 );
             }
-        },
+        })
+        .run_if(on_message::<KeyboardInput>),
     );
     app.add_systems(Update, resize_camera.run_if(on_message::<WindowResized>));
     app.add_systems(Update, update_player_camera);

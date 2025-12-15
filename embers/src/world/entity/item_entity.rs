@@ -2,7 +2,7 @@ use crate::world::entity::entity;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-#[derive(Component)]
+#[derive(Component, Debug)]
 pub struct ItemEntity(pub Entity);
 
 pub fn item_entity(item: Entity) -> impl Bundle {

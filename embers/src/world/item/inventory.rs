@@ -2,10 +2,13 @@ use crate::registry::DynamicRegistry;
 use crate::utils::Marker;
 use crate::world::entity::item_entity::ItemEntity;
 use crate::world::item::{ItemComponent, ItemStack, MaxStackSize, StackCount};
-use bevy::ecs::system::entity_command::log_components;
 use bevy::prelude::*;
+use std::any::type_name;
 use std::marker::PhantomData;
-use std::ops::{Index, IndexMut, Range};
+use std::ops::{
+    Index, IndexMut, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
+};
+use thiserror::Error;
 
 pub type InventorySlot = i8;
 
@@ -15,12 +18,6 @@ pub struct Inventory<const N: usize, M: Marker = ()>([Option<Entity>; N], Phanto
 impl<const N: usize, M: Marker> Inventory<N, M> {
     pub fn new() -> Self {
         Self([const { None }; N], PhantomData)
-    }
-    pub fn slice(&self) -> &[Option<Entity>] {
-        self.0.as_slice()
-    }
-    pub fn slice_mut(&mut self) -> &mut [Option<Entity>] {
-        self.0.as_mut_slice()
     }
 }
 
@@ -37,18 +34,38 @@ impl<const N: usize, M: Marker> IndexMut<InventorySlot> for Inventory<N, M> {
     }
 }
 
-impl<const N: usize, M: Marker> Index<Range<InventorySlot>> for Inventory<N, M> {
-    type Output = [Option<Entity>];
-    fn index(&self, index: Range<InventorySlot>) -> &Self::Output {
-        &self.0[index.start as usize..index.end as usize]
-    }
+macro_rules! range_index_inventory {
+    ($range:ty, $pattern:pat, $slice:expr) => {
+        impl<const N: usize, M: Marker> Index<$range> for Inventory<N, M> {
+            type Output = [Option<Entity>];
+            fn index(&self, index: $range) -> &Self::Output {
+                let $pattern = index;
+                &self.0[$slice]
+            }
+        }
+        impl<const N: usize, M: Marker> IndexMut<$range> for Inventory<N, M> {
+            fn index_mut(&mut self, index: $range) -> &mut Self::Output {
+                let $pattern = index;
+                &mut self.0[$slice]
+            }
+        }
+    };
 }
 
-impl<const N: usize, M: Marker> IndexMut<Range<InventorySlot>> for Inventory<N, M> {
-    fn index_mut(&mut self, index: Range<InventorySlot>) -> &mut Self::Output {
-        &mut self.0[index.start as usize..index.end as usize]
-    }
-}
+range_index_inventory!(RangeFull, _idx, ..);
+range_index_inventory!(RangeFrom<InventorySlot>, idx, idx.start as usize..);
+range_index_inventory!(RangeTo<InventorySlot>, idx, ..idx.end as usize);
+range_index_inventory!(RangeToInclusive<InventorySlot>, idx, ..idx.end as usize);
+range_index_inventory!(
+    Range<InventorySlot>,
+    idx,
+    idx.start as usize..idx.end as usize
+);
+range_index_inventory!(
+    RangeInclusive<InventorySlot>,
+    idx,
+    *idx.start() as usize..*idx.end() as usize
+);
 
 enum ItemStackResult {
     /// Failure; Cannot stack.
@@ -108,10 +125,10 @@ fn try_stack(
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum ItemSource<const N: usize, M: Marker> {
-    // Range isn't Copy
-    InventorySlice(Entity, (InventorySlot, InventorySlot), PhantomData<M>),
+    // TODO: Use range when #125687 stabilizes
+    InventoryRange(Entity, (InventorySlot, InventorySlot), PhantomData<M>),
     InventorySlot(Entity, InventorySlot, PhantomData<M>),
     ItemEntity(Entity),
 }
@@ -128,37 +145,55 @@ impl<const N: usize, M: Marker> ItemSource<N, M> {
         range: Range<InventorySlot>,
         _: &Inventory<N, M>,
     ) -> Self {
-        Self::InventorySlice(inventory, (range.start, range.end), PhantomData)
+        Self::InventoryRange(inventory, (range.start, range.end), PhantomData)
     }
     pub fn inventory_slot(inventory: Entity, slot: InventorySlot, _: &Inventory<N, M>) -> Self {
         Self::InventorySlot(inventory, slot, PhantomData)
     }
-    fn verify_existence(&self, world: &World) -> bool {
-        world
-            .get_entity(*match self {
-                Self::InventorySlice(inventory, _, _) => inventory,
-                Self::InventorySlot(inventory, _, _) => inventory,
-                Self::ItemEntity(item_entity) => item_entity,
-            })
-            .is_ok()
+    fn verify_existence(&self, world: &World) -> Result<(), InvalidItemHolderError> {
+        let entity = *match self {
+            Self::InventoryRange(inventory, _, _) => inventory,
+            Self::InventorySlot(inventory, _, _) => inventory,
+            Self::ItemEntity(item_entity) => item_entity,
+        };
+        let entity_ref = world
+            .get_entity(entity)
+            .map_err(|_err| InvalidItemHolderError::NonexistentEntity(entity))?;
+        match self {
+            Self::InventoryRange(..) | Self::InventorySlot(..) => {
+                if !entity_ref.contains::<Inventory<N, M>>() {
+                    return Err(InvalidItemHolderError::NotAnInventory(
+                        entity,
+                        N,
+                        type_name::<M>(),
+                    ));
+                }
+            }
+            Self::ItemEntity(..) => {
+                if !entity_ref.contains::<ItemEntity>() {
+                    return Err(InvalidItemHolderError::NotAnItemEntity(entity));
+                }
+            }
+        }
+        Ok(())
     }
     fn single(&self) -> SingleItemSource<N, M> {
-        match self {
-            Self::InventorySlice(..) => {
-                panic!("An inventory slice can not be interpreted as a single item slot")
+        match *self {
+            Self::InventoryRange(..) => {
+                panic!("An inventory rannge can not be interpreted as a single item slot")
             }
-            &Self::InventorySlot(inventory, slot, _) => {
+            Self::InventorySlot(inventory, slot, _) => {
                 SingleItemSource::InventorySlot(inventory, slot, PhantomData)
             }
-            &Self::ItemEntity(item_entity) => SingleItemSource::ItemEntity(item_entity),
+            Self::ItemEntity(item_entity) => SingleItemSource::ItemEntity(item_entity),
         }
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum ItemDestination<const N: usize, M: Marker> {
-    // Range isn't Copy
-    InventorySlice(Entity, (InventorySlot, InventorySlot), PhantomData<M>),
+    // TODO: Use range when #125687 stabilizes
+    InventoryRange(Entity, (InventorySlot, InventorySlot), PhantomData<M>),
     InventorySlot(Entity, InventorySlot, PhantomData<M>),
     ItemEntity(Entity),
 }
@@ -175,34 +210,64 @@ impl<const N: usize, M: Marker> ItemDestination<N, M> {
         range: Range<InventorySlot>,
         _: &Inventory<N, M>,
     ) -> Self {
-        Self::InventorySlice(inventory, (range.start, range.end), PhantomData)
+        Self::InventoryRange(inventory, (range.start, range.end), PhantomData)
     }
     pub fn inventory_slot(inventory: Entity, slot: InventorySlot, _: &Inventory<N, M>) -> Self {
         Self::InventorySlot(inventory, slot, PhantomData)
     }
-    fn verify_existence(&self, world: &World) -> bool {
-        world
-            .get_entity(*match self {
-                Self::InventorySlice(inventory, _, _) => inventory,
-                Self::InventorySlot(inventory, _, _) => inventory,
-                Self::ItemEntity(item_entity) => item_entity,
-            })
-            .is_ok()
+    fn verify_existence(&self, world: &World) -> Result<(), InvalidItemHolderError> {
+        let entity = *match self {
+            Self::InventoryRange(inventory, _, _) => inventory,
+            Self::InventorySlot(inventory, _, _) => inventory,
+            Self::ItemEntity(item_entity) => item_entity,
+        };
+        let entity_ref = world
+            .get_entity(entity)
+            .map_err(|_err| InvalidItemHolderError::NonexistentEntity(entity))?;
+        match self {
+            Self::InventoryRange(..) | Self::InventorySlot(..) => {
+                if !entity_ref.contains::<Inventory<N, M>>() {
+                    return Err(InvalidItemHolderError::NotAnInventory(
+                        entity,
+                        N,
+                        type_name::<M>(),
+                    ));
+                }
+            }
+            Self::ItemEntity(..) => {
+                if !entity_ref.contains::<ItemEntity>() {
+                    return Err(InvalidItemHolderError::NotAnItemEntity(entity));
+                }
+            }
+        }
+        Ok(())
     }
     fn single(&self) -> SingleItemDestination<N, M> {
-        match self {
-            Self::InventorySlice(..) => {
-                panic!("An inventory slice can not be interpreted as a single item slot")
+        match *self {
+            Self::InventoryRange(..) => {
+                panic!("An inventory range can not be interpreted as a single item slot")
             }
-            &Self::InventorySlot(inventory, slot, _) => {
+            Self::InventorySlot(inventory, slot, _) => {
                 SingleItemDestination::InventorySlot(inventory, slot, PhantomData)
             }
-            &Self::ItemEntity(item_entity) => SingleItemDestination::ItemEntity(item_entity),
+            Self::ItemEntity(item_entity) => SingleItemDestination::ItemEntity(item_entity),
         }
     }
 }
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Debug, Error)]
+enum InvalidItemHolderError {
+    #[error("The specified entity ({0}) does not exist")]
+    NonexistentEntity(Entity),
+    #[error("The specified entity ({0}) doesn't contain an inventory<{1}, {2}> component")]
+    NotAnInventory(Entity, usize, &'static str),
+    #[error("The specified entity ({0}) doesn't contain an item entity component")]
+    NotAnItemEntity(Entity),
+    #[error("Illegal range")]
+    IllegalRange,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ItemMoveQuantity {
     All,
     Half,
@@ -216,22 +281,22 @@ enum SingleItemSource<const N: usize, M: Marker> {
 
 impl<const N: usize, M: Marker> SingleItemSource<N, M> {
     fn set_item(&mut self, world: &mut World, item: Entity) {
-        match self {
+        match *self {
             Self::InventorySlot(inventory, slot, _) => {
-                world.get_mut::<Inventory<N, M>>(*inventory).unwrap()[*slot] = Some(item)
+                world.get_mut::<Inventory<N, M>>(inventory).unwrap()[slot] = Some(item)
             }
             Self::ItemEntity(item_entity) => {
-                world.get_mut::<ItemEntity>(*item_entity).unwrap().0 = item
+                world.get_mut::<ItemEntity>(item_entity).unwrap().0 = item
             }
         };
     }
     /// Call this AFTER the relationship between the owner and the item has been removed
     fn drop_slot(&mut self, world: &mut World) {
-        match self {
+        match *self {
             Self::InventorySlot(inventory, slot, _) => {
-                world.get_mut::<Inventory<N, M>>(*inventory).unwrap()[*slot] = None
+                world.get_mut::<Inventory<N, M>>(inventory).unwrap()[slot] = None
             }
-            Self::ItemEntity(item_entity) => world.entity_mut(*item_entity).despawn(),
+            Self::ItemEntity(item_entity) => world.entity_mut(item_entity).despawn(),
         };
     }
 }
@@ -243,13 +308,12 @@ enum SingleItemDestination<const N: usize, M: Marker> {
 
 impl<const N: usize, M: Marker> SingleItemDestination<N, M> {
     fn set_item(&mut self, world: &mut World, item: Entity) {
-        match self {
+        match *self {
             Self::InventorySlot(inventory, slot, _) => {
-                log_components().apply(world.entity_mut(*inventory));
-                world.get_mut::<Inventory<N, M>>(*inventory).unwrap()[*slot] = Some(item)
+                world.get_mut::<Inventory<N, M>>(inventory).unwrap()[slot] = Some(item)
             }
             Self::ItemEntity(item_entity) => {
-                world.get_mut::<ItemEntity>(*item_entity).unwrap().0 = item
+                world.get_mut::<ItemEntity>(item_entity).unwrap().0 = item
             }
         };
     }
@@ -281,6 +345,7 @@ pub trait MoveItemCommandExt {
 }
 
 impl<'w, 's> MoveItemCommandExt for Commands<'w, 's> {
+    #[inline]
     fn move_item<
         const N_SOURCE: usize,
         MSource: Marker,
@@ -304,13 +369,19 @@ impl<const N_SOURCE: usize, MSource: Marker, const N_DESTINATION: usize, MDestin
     Command for MoveItemCommand<N_SOURCE, MSource, N_DESTINATION, MDestination>
 {
     fn apply(self, world: &mut World) {
-        if !self.source.verify_existence(world) || !self.destination.verify_existence(world) {
+        if let Err(err) = self.source.verify_existence(world) {
+            warn!("Could not move item from entity: {}", err);
+            return;
+        }
+        if let Err(err) = self.destination.verify_existence(world) {
+            warn!("Could not move item to entity: {}", err);
             return;
         }
         let mut move_single =
             |source: &mut SingleItemSource<N_SOURCE, MSource>,
              destination: &mut SingleItemDestination<N_DESTINATION, MDestination>,
-             swap_if_not_stackable: bool| {
+             swap_if_not_stackable: bool|
+             -> bool {
                 let (src_owner, src_item) = match *source {
                     SingleItemSource::InventorySlot(inventory, slot, _) => (
                         inventory,
@@ -319,13 +390,14 @@ impl<const N_SOURCE: usize, MSource: Marker, const N_DESTINATION: usize, MDestin
                             .unwrap()[slot]
                         {
                             Some(item) => item,
-                            None => return,
+                            None => return true,
                         },
                     ),
-                    SingleItemSource::ItemEntity(item_entity) => (
-                        item_entity,
-                        world.get_mut::<ItemEntity>(item_entity).unwrap().0,
-                    ),
+                    SingleItemSource::ItemEntity(item_entity) => (item_entity, {
+                        let _ = world.entity(item_entity);
+                        let _ = world.get::<ItemEntity>(item_entity).unwrap();
+                        world.get_mut::<ItemEntity>(item_entity).unwrap().0
+                    }),
                 };
                 let (dst_owner, dst_slot) = match *destination {
                     SingleItemDestination::InventorySlot(inventory, slot, _) => (
@@ -343,36 +415,32 @@ impl<const N_SOURCE: usize, MSource: Marker, const N_DESTINATION: usize, MDestin
                     Some(dst_item) => match try_stack(world, src_item, dst_item, self.quantity) {
                         ItemStackResult::NotStackable => {
                             if swap_if_not_stackable {
-                                world
-                                    .entity_mut(src_item)
-                                    .remove_related::<ChildOf>(&[src_owner])
-                                    .add_one_related::<ChildOf>(dst_owner);
-                                world
-                                    .entity_mut(dst_item)
-                                    .remove_related::<ChildOf>(&[dst_owner])
-                                    .add_one_related::<ChildOf>(src_owner);
+                                world.entity_mut(src_item).insert(ChildOf(dst_owner));
+                                world.entity_mut(dst_item).insert(ChildOf(src_owner));
                                 source.set_item(world, dst_item);
                                 destination.set_item(world, src_item);
                             }
+                            false
                         }
-                        ItemStackResult::Remaining => {}
-                        ItemStackResult::Consumed => source.drop_slot(world),
+                        ItemStackResult::Remaining => false,
+                        ItemStackResult::Consumed => {
+                            source.drop_slot(world);
+                            true
+                        }
                     },
                     None => {
-                        world
-                            .entity_mut(src_item)
-                            .remove_related::<ChildOf>(&[src_owner])
-                            .add_one_related::<ChildOf>(dst_owner);
+                        world.entity_mut(src_item).insert(ChildOf(dst_owner));
                         source.drop_slot(world);
                         destination.set_item(world, src_item);
+                        true
                     }
                 }
             };
         match (&self.source, &self.destination) {
-            (ItemSource::InventorySlice(..), ItemDestination::InventorySlice(..)) => {
-                unimplemented!("Can not move from an inventory slice to another inventory slice")
+            (ItemSource::InventoryRange(..), ItemDestination::InventoryRange(..)) => {
+                unimplemented!("Can not move from an inventory range to another inventory range")
             }
-            (&ItemSource::InventorySlice(src_inventory, ref src_range, _), _) => {
+            (&ItemSource::InventoryRange(src_inventory, ref src_range, _), _) => {
                 let mut destination = self.destination.single();
                 for src_slot in src_range.0..src_range.1 {
                     move_single(
@@ -382,10 +450,10 @@ impl<const N_SOURCE: usize, MSource: Marker, const N_DESTINATION: usize, MDestin
                     );
                 }
             }
-            (_, &ItemDestination::InventorySlice(dst_inventory, ref dst_range, _)) => {
+            (_, &ItemDestination::InventoryRange(dst_inventory, ref dst_range, _)) => {
                 let mut source = self.source.single();
                 for dst_slot in dst_range.0..dst_range.1 {
-                    move_single(
+                    if move_single(
                         &mut source,
                         &mut SingleItemDestination::InventorySlot(
                             dst_inventory,
@@ -393,14 +461,18 @@ impl<const N_SOURCE: usize, MSource: Marker, const N_DESTINATION: usize, MDestin
                             PhantomData,
                         ),
                         false,
-                    );
+                    ) {
+                        break;
+                    }
                 }
             }
-            _ => move_single(
-                &mut self.source.single(),
-                &mut self.destination.single(),
-                true,
-            ),
+            _ => {
+                move_single(
+                    &mut self.source.single(),
+                    &mut self.destination.single(),
+                    true,
+                );
+            }
         };
     }
 }

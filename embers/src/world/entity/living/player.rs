@@ -250,7 +250,7 @@ static ATTRIBUTES: LazyLock<HashMap<NamespacedKey, f32>> = LazyLock::new(|| {
 });
 const FLOAT_HEIGHT: f32 = 0.85;
 
-#[derive(Component)]
+#[derive(Component, Debug)]
 pub struct Player {
     pub flops: i32,
     pub hashes: i32,
@@ -266,7 +266,7 @@ impl PlayerInventory {
     const MAIN_HAND_SLOT: InventorySlot = 37;
 }
 
-#[derive(Component)]
+#[derive(Component, Debug)]
 pub struct SelectedHotbarSlot(pub InventorySlot);
 
 impl Default for SelectedHotbarSlot {
@@ -275,7 +275,7 @@ impl Default for SelectedHotbarSlot {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub enum SlotActionStatus {
     #[default]
     Idle,
@@ -305,14 +305,14 @@ impl SlotActionStatus {
     }
 }
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum EquipmentSlot {
     MainHand,
     OffHand,
     Armor,
 }
 
-#[derive(Component)]
+#[derive(Component, Debug)]
 pub struct PlayerActionStatus(HashMap<EquipmentSlot, SlotActionStatus>);
 
 impl PlayerActionStatus {

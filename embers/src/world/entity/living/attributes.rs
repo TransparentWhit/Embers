@@ -13,12 +13,14 @@ pub mod embers {
     attribute!(MOVEMENT_SPEED, "movement_speed");
 }
 
+#[derive(Debug)]
 #[identify(key)]
 pub struct AttributeInstance {
     pub(super) key: NamespacedKey,
     pub base: f32,
     pub modifiers: HashSet<AttributeModifier>,
 }
+
 impl AttributeInstance {
     pub fn value(&self) -> f32 {
         let mut base = self.base;
@@ -34,17 +36,20 @@ impl AttributeInstance {
         base * multiplier
     }
 }
+
 impl Keyed for AttributeInstance {
     fn key(&self) -> &NamespacedKey {
         &self.key
     }
 }
 
+#[derive(Debug)]
 #[identify(key)]
 pub struct AttributeModifier {
     key: NamespacedKey,
     modification: AttributeModification,
 }
+
 impl AttributeModifier {
     pub fn new(key: NamespacedKey, modification: AttributeModification) -> Self {
         Self { key, modification }
@@ -53,12 +58,14 @@ impl AttributeModifier {
         &self.modification
     }
 }
+
 impl Keyed for AttributeModifier {
     fn key(&self) -> &NamespacedKey {
         &self.key
     }
 }
 
+#[derive(Debug)]
 pub enum AttributeModification {
     AddValue(f32),
     AddMultipliedValue(f32),

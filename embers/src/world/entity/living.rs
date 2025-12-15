@@ -11,10 +11,10 @@ use bevy::prelude::*;
 use bevy_tnua::prelude::*;
 use std::collections::HashMap;
 
-#[derive(Component)]
+#[derive(Component, Debug)]
 pub struct Health(pub f32);
 
-#[derive(Component)]
+#[derive(Component, Debug)]
 pub struct Attributes(pub HashMap<NamespacedKey, AttributeInstance>);
 
 const LOCKED_AXES: LockedAxes = LockedAxes::new().lock_rotation_x().lock_rotation_z();

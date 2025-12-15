@@ -8,7 +8,7 @@ use std::time::Duration;
 
 static MODEL_KEY: LazyLock<NamespacedKey> = LazyLock::new(|| NamespacedKey::new_embers("tnt"));
 
-#[derive(Component)]
+#[derive(Component, Debug)]
 pub struct Fuse(Timer);
 impl Default for Fuse {
     fn default() -> Self {
