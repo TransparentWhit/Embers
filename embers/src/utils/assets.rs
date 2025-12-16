@@ -58,8 +58,12 @@ impl AssetScope {
             .with_mode(NodeImageMode::Stretch)
     }
     #[inline]
-    fn image<'a>(&self, asset_server: &AssetServer, path: impl Into<&'a str>) -> Handle<Image> {
-        asset_server.load(self.images_root.resolve(path.into()).unwrap())
+    pub fn item_image<'a>(&self, asset_server: &AssetServer, key: &NamespacedKey) -> ImageNode {
+        ImageNode::new(self.image(
+            asset_server,
+            &*format!("items/{}/{}.png", key.namespace(), key.key()),
+        ))
+        .with_mode(NodeImageMode::Stretch)
     }
     #[inline]
     fn scene<'a>(
@@ -90,6 +94,10 @@ impl AssetScope {
         label: usize,
     ) -> Handle<AnimationClip> {
         self.model(asset_server, path, GltfAssetLabel::Animation(label))
+    }
+    #[inline]
+    fn image<'a>(&self, asset_server: &AssetServer, path: impl Into<&'a str>) -> Handle<Image> {
+        asset_server.load(self.images_root.resolve(path.into()).unwrap())
     }
     #[inline]
     fn model<'a, M: Asset>(

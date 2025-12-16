@@ -1,16 +1,17 @@
 use crate::GameState;
 use crate::ui::{ScalableComponent, UIScale, scalable};
+use crate::utils::Keyed;
 use crate::utils::assets::GLOBAL_ASSETS;
 use crate::world::entity::item_entity::{ItemEntity, item_entity};
 use crate::world::entity::living::dummy::dummy;
 use crate::world::entity::living::player::{
-    HOTBAR_SLOTS, Player, PlayerInventory, SelectedHotbarSlot, player,
+    HOTBAR_SLOTS, Player, PlayerInventory, SelectedHotbarSlot, player, process_input,
 };
 use crate::world::entity::tnt::tnt;
 use crate::world::item::inventory::{
     InventorySlot, ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt,
 };
-use crate::world::item::sword;
+use crate::world::item::{ItemStack, sword};
 use avian3d::prelude::*;
 use bevy::camera::{ScalingMode, Viewport};
 use bevy::input::keyboard::KeyboardInput;
@@ -103,11 +104,23 @@ fn init(
                                 let mut hotbar_slots = Vec::with_capacity(HOTBAR_SLOTS as usize);
                                 for i in 0..HOTBAR_SLOTS {
                                     hotbar_slots.push((
-                                        scalable(|scale| Node {
-                                            width: px(scale * 16),
-                                            height: px(scale * 16),
-                                            margin: UiRect::horizontal(px(scale * 2)),
-                                            ..default()
+                                        scalable(if i == 0 {
+                                            |scale| Node {
+                                                left: px(scale * 1),
+                                                top: px(scale * 1),
+                                                width: px(scale * 16),
+                                                height: px(scale * 16),
+                                                margin: UiRect::all(px(scale * 2)),
+                                                ..default()
+                                            }
+                                        } else {
+                                            |scale| Node {
+                                                top: px(scale * 1),
+                                                width: px(scale * 16),
+                                                height: px(scale * 16),
+                                                margin: UiRect::all(px(scale * 2)),
+                                                ..default()
+                                            }
                                         }),
                                         ImageNode::default(),
                                         HotbarSlot(i),
@@ -138,7 +151,18 @@ fn init(
                                 ..default()
                             }),
                             GLOBAL_ASSETS.image_node(&asset_server, "main_hand"),
-                            children![(ImageNode::default(), MainHandSlot,),]
+                            children![(
+                                scalable(|scale| Node {
+                                    left: px(scale * 1),
+                                    top: px(scale * 1),
+                                    width: px(scale * 16),
+                                    height: px(scale * 16),
+                                    margin: UiRect::all(px(scale * 2)),
+                                    ..default()
+                                }),
+                                ImageNode::default(),
+                                MainHandSlot,
+                            ),]
                         ),
                     ],
                 ),]
@@ -149,8 +173,8 @@ fn init(
                 Bloom::default(),
                 Projection::from(OrthographicProjection {
                     scaling_mode: ScalingMode::Fixed {
-                        width: 16f32,
-                        height: 9f32,
+                        width: 16.,
+                        height: 9.,
                     },
                     ..OrthographicProjection::default_3d()
                 }),
@@ -234,6 +258,44 @@ fn update_player_camera(
     }
 }
 
+fn update_hotbar(
+    asset_server: Res<AssetServer>,
+    player_inventory: Single<Ref<PlayerInventory>>,
+    items: Query<&ItemStack>,
+    main_hand_slot: Single<&mut ImageNode, With<MainHandSlot>>,
+    mut hotbar_slots: Query<(&mut ImageNode, &HotbarSlot), Without<MainHandSlot>>,
+) {
+    if !player_inventory.is_changed() {
+        return;
+    }
+    let player_inventory = player_inventory;
+    let _: Mut<ImageNode>;
+    *main_hand_slot.into_inner() = match player_inventory.main_hand() {
+        Some(item) => GLOBAL_ASSETS.item_image(
+            &asset_server,
+            items
+                .get(item)
+                .expect("Inventory held an item that doesn't exist")
+                .key(),
+        ),
+        None => ImageNode::default(),
+    };
+    for (hotbar_image, hotbar_slot) in hotbar_slots.iter_mut() {
+        *hotbar_image.into_inner() = match player_inventory.hotbar(hotbar_slot.0) {
+            Some(item) => GLOBAL_ASSETS.item_image(
+                &asset_server,
+                items
+                    .get(item)
+                    .expect("Inventory held an item that doesn't exist")
+                    .key(),
+            ),
+            None => ImageNode::default(),
+        };
+    }
+}
+
+fn update_inventory(player_inventory: Single<&PlayerInventory>) {}
+
 fn update_hotbar_selection(
     mut updated_message: MessageReader<HotbarSelectionUpdated>,
     mut hotbar_selection_node: Single<
@@ -284,6 +346,7 @@ pub(super) fn plugin(app: &mut App) {
     );
     app.add_systems(Update, resize_camera.run_if(on_message::<WindowResized>));
     app.add_systems(Update, update_player_camera);
+    app.add_systems(Update, update_hotbar.after(process_input));
     app.add_message::<HotbarSelectionUpdated>();
     app.add_systems(Update, update_hotbar_selection);
 }

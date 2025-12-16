@@ -6,7 +6,8 @@ use bevy::prelude::*;
 use std::any::type_name;
 use std::marker::PhantomData;
 use std::ops::{
-    Index, IndexMut, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
+    DerefMut, Index, IndexMut, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo,
+    RangeToInclusive,
 };
 use thiserror::Error;
 
@@ -88,7 +89,7 @@ fn try_stack(
     if !source_ref.contains::<ItemStack>() || !target_ref.contains::<ItemStack>() {
         return ItemStackResult::NotStackable;
     }
-    if world
+    if !world
         .resource::<DynamicRegistry<dyn ItemComponent>>()
         .iter()
         .all(|item_component| item_component.can_stack(source_ref, target_ref))
@@ -317,6 +318,15 @@ impl<const N: usize, M: Marker> SingleItemDestination<N, M> {
             }
         };
     }
+    /// Call this AFTER the relationship between the owner and the item has been removed
+    fn drop_slot(&mut self, world: &mut World) {
+        match *self {
+            Self::InventorySlot(inventory, slot, _) => {
+                world.get_mut::<Inventory<N, M>>(inventory).unwrap()[slot] = None
+            }
+            Self::ItemEntity(item_entity) => world.entity_mut(item_entity).despawn(),
+        };
+    }
 }
 
 pub struct MoveItemCommand<
@@ -382,58 +392,64 @@ impl<const N_SOURCE: usize, MSource: Marker, const N_DESTINATION: usize, MDestin
              destination: &mut SingleItemDestination<N_DESTINATION, MDestination>,
              swap_if_not_stackable: bool|
              -> bool {
-                let (src_owner, src_item) = match *source {
+                let (src_owner, src_slot) = match *source {
                     SingleItemSource::InventorySlot(inventory, slot, _) => (
                         inventory,
-                        match world
-                            .get_mut::<Inventory<N_SOURCE, MSource>>(inventory)
-                            .unwrap()[slot]
-                        {
-                            Some(item) => item,
-                            None => return true,
-                        },
+                        world
+                            .get::<Inventory<N_SOURCE, MSource>>(inventory)
+                            .unwrap()[slot],
                     ),
-                    SingleItemSource::ItemEntity(item_entity) => (item_entity, {
-                        let _ = world.entity(item_entity);
-                        let _ = world.get::<ItemEntity>(item_entity).unwrap();
-                        world.get_mut::<ItemEntity>(item_entity).unwrap().0
-                    }),
+                    SingleItemSource::ItemEntity(item_entity) => (
+                        item_entity,
+                        Some(world.get::<ItemEntity>(item_entity).unwrap().0),
+                    ),
                 };
                 let (dst_owner, dst_slot) = match *destination {
                     SingleItemDestination::InventorySlot(inventory, slot, _) => (
                         inventory,
                         world
-                            .get_mut::<Inventory<N_DESTINATION, MDestination>>(inventory)
+                            .get::<Inventory<N_DESTINATION, MDestination>>(inventory)
                             .unwrap()[slot],
                     ),
                     SingleItemDestination::ItemEntity(item_entity) => (
                         item_entity,
-                        Some(world.get_mut::<ItemEntity>(item_entity).unwrap().0),
+                        Some(world.get::<ItemEntity>(item_entity).unwrap().0),
                     ),
                 };
-                match dst_slot {
-                    Some(dst_item) => match try_stack(world, src_item, dst_item, self.quantity) {
-                        ItemStackResult::NotStackable => {
-                            if swap_if_not_stackable {
-                                world.entity_mut(src_item).insert(ChildOf(dst_owner));
-                                world.entity_mut(dst_item).insert(ChildOf(src_owner));
-                                source.set_item(world, dst_item);
-                                destination.set_item(world, src_item);
+                match (src_slot, dst_slot) {
+                    (Some(src_item), Some(dst_item)) => {
+                        match try_stack(world, src_item, dst_item, self.quantity) {
+                            ItemStackResult::NotStackable => {
+                                if swap_if_not_stackable {
+                                    world.entity_mut(src_item).insert(ChildOf(dst_owner));
+                                    world.entity_mut(dst_item).insert(ChildOf(src_owner));
+                                    source.set_item(world, dst_item);
+                                    destination.set_item(world, src_item);
+                                }
+                                false
                             }
-                            false
+                            ItemStackResult::Remaining => false,
+                            ItemStackResult::Consumed => {
+                                source.drop_slot(world);
+                                true
+                            }
                         }
-                        ItemStackResult::Remaining => false,
-                        ItemStackResult::Consumed => {
-                            source.drop_slot(world);
-                            true
-                        }
-                    },
-                    None => {
+                    }
+                    (Some(src_item), None) => {
                         world.entity_mut(src_item).insert(ChildOf(dst_owner));
                         source.drop_slot(world);
                         destination.set_item(world, src_item);
                         true
                     }
+                    (None, Some(dst_item)) => {
+                        if swap_if_not_stackable {
+                            world.entity_mut(dst_item).insert(ChildOf(src_owner));
+                            source.set_item(world, dst_item);
+                            destination.drop_slot(world);
+                        }
+                        true
+                    }
+                    (None, None) => true,
                 }
             };
         match (&self.source, &self.destination) {

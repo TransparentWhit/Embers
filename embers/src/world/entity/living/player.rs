@@ -3,12 +3,15 @@ use crate::ui::world::{HotbarSelectionUpdated, PlayerCamera};
 use crate::utils::NamespacedKey;
 use crate::utils::input::{DoubleClicks, InputButton, just_pressed, pressed};
 use crate::world::entity::living::attributes::embers;
-use crate::world::item::inventory::{Inventory, InventorySlot};
+use crate::world::item::inventory::{
+    Inventory, InventorySlot, ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt,
+};
 use crate::world::item::{HandActionWield, ItemAction, ItemActionTrigger, ItemActionWield};
 use crate::world::item::{ItemActionSlot, ItemActions};
 use avian3d::prelude::*;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
+use bevy::reflect::Array;
 use bevy::time::Stopwatch;
 use bevy::window::PrimaryWindow;
 use bevy_tnua::builtins::TnuaBuiltinDash;
@@ -16,7 +19,7 @@ use bevy_tnua::prelude::*;
 use std::collections::HashMap;
 use std::iter::repeat;
 use std::marker::PhantomData;
-use std::ops::DerefMut;
+use std::ops::{DerefMut, Range};
 use std::sync::{LazyLock, RwLock};
 use std::time::Duration;
 
@@ -56,7 +59,8 @@ controls![CONTROLS_HOTBARS, HOTBAR_SLOTS as usize,
 controls!(CONTROLS_SWAP_OFF_HAND, K@KeyF);
 controls!(CONTROLS_INVENTORY, K@KeyR);
 
-pub(in crate::world) fn process_input(
+pub fn process_input(
+    mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     mouse_scroll: Res<AccumulatedMouseScroll>,
@@ -64,6 +68,7 @@ pub(in crate::world) fn process_input(
     window: Single<&Window, With<PrimaryWindow>>,
     mut player: Single<
         (
+            Entity,
             &Attributes,
             &PlayerInventory,
             &mut SelectedHotbarSlot,
@@ -77,7 +82,7 @@ pub(in crate::world) fn process_input(
     mut hotbar_selection_updated_message: MessageWriter<HotbarSelectionUpdated>,
     time: Res<Time>,
 ) {
-    let (attributes, inventory, selected_hotbar_slot, action_status, controller) =
+    let (player, attributes, inventory, selected_hotbar_slot, action_status, controller) =
         player.deref_mut();
     let prev_hotbar_selection = selected_hotbar_slot.0;
     for hotbar_slot in 0..HOTBAR_SLOTS {
@@ -95,7 +100,13 @@ pub(in crate::world) fn process_input(
     if prev_hotbar_selection != selected_hotbar_slot.0 {
         hotbar_selection_updated_message.write(HotbarSelectionUpdated);
     }
-
+    if just_pressed(&CONTROLS_SWAP_OFF_HAND, &keys, &mouse) {
+        commands.move_item(
+            ItemSource::inventory_slot(*player, PlayerInventory::MAIN_HAND_SLOT, inventory),
+            ItemDestination::inventory_slot(*player, selected_hotbar_slot.0, inventory),
+            ItemMoveQuantity::All,
+        );
+    }
     #[inline]
     fn active_item_trigger(
         control: &RwLock<InputButton>,
@@ -262,8 +273,23 @@ pub const HOTBAR_SLOTS: InventorySlot = 6;
 pub type PlayerInventory = Inventory<38, PhantomData<Player>>;
 
 impl PlayerInventory {
+    const HOTBAR_SLOTS: Range<InventorySlot> = 0..HOTBAR_SLOTS;
     const ARMOR_SLOT: InventorySlot = 36;
     const MAIN_HAND_SLOT: InventorySlot = 37;
+    pub fn armor(&self) -> Option<Entity> {
+        self[Self::ARMOR_SLOT]
+    }
+    pub fn main_hand(&self) -> Option<Entity> {
+        self[Self::MAIN_HAND_SLOT]
+    }
+    pub fn hotbar(&self, slot: InventorySlot) -> Option<Entity> {
+        debug_assert!(
+            Self::HOTBAR_SLOTS.contains(&slot),
+            "Slot out of bounds for player hotbar: {}",
+            slot
+        );
+        self[slot]
+    }
 }
 
 #[derive(Component, Debug)]

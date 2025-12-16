@@ -1,7 +1,7 @@
 pub mod inventory;
 
 use crate::registry::{DynamicRegistry, RegistryError};
-use crate::utils::NamespacedKey;
+use crate::utils::{Keyed, NamespacedKey};
 use bevy::prelude::*;
 use embers_macros::identify;
 use std::collections::HashMap;
@@ -21,6 +21,12 @@ pub mod embers {
 #[derive(Component, Clone, Debug, Eq, Hash, PartialEq)]
 #[require(StackCount)]
 pub struct ItemStack(NamespacedKey);
+
+impl Keyed for ItemStack {
+    fn key(&self) -> &NamespacedKey {
+        &self.0
+    }
+}
 
 impl ItemStack {
     pub fn new(name: NamespacedKey) -> Self {
