@@ -1,5 +1,5 @@
+use crate::utils::{const_hash_set, ConstHashSet, Namespaced, NamespacedKey};
 use crate::GameState;
-use crate::utils::{ConstHashSet, Namespaced, NamespacedKey, const_hash_set};
 use bevy::app::App;
 use bevy::asset::{AssetPath, LoadedFolder};
 use bevy::prelude::*;
@@ -21,7 +21,7 @@ impl AssetScope {
         }
     }
     #[inline]
-    pub fn entity_scene(
+    pub fn actor_scene(
         &self,
         asset_server: &AssetServer,
         key: &NamespacedKey,
@@ -29,12 +29,12 @@ impl AssetScope {
     ) -> Handle<Scene> {
         self.scene(
             asset_server,
-            &*format!("entities/{}/{}", key.namespace(), key.key()),
+            &*format!("actors/{}/{}", key.namespace(), key.key()),
             label,
         )
     }
     #[inline]
-    pub fn animate_entity(
+    pub fn animate_actor(
         &self,
         animation_player: &mut AnimationPlayer,
         asset_server: &AssetServer,
@@ -44,21 +44,21 @@ impl AssetScope {
         self.animate(
             animation_player,
             asset_server,
-            &*format!("entities/{}/{}", key.namespace(), key.key()),
+            &*format!("actors/{}/{}", key.namespace(), key.key()),
             label,
         )
     }
     #[inline]
-    pub fn image_node<'a>(
+    pub fn image_node<'path>(
         &self,
         asset_server: &AssetServer,
-        path: impl Into<&'a str>,
+        path: impl Into<&'path str>,
     ) -> ImageNode {
         ImageNode::new(self.image(asset_server, &*format!("ui/{}.png", path.into())))
             .with_mode(NodeImageMode::Stretch)
     }
     #[inline]
-    pub fn item_image<'a>(&self, asset_server: &AssetServer, key: &NamespacedKey) -> ImageNode {
+    pub fn item_image(&self, asset_server: &AssetServer, key: &NamespacedKey) -> ImageNode {
         ImageNode::new(self.image(
             asset_server,
             &*format!("items/{}/{}.png", key.namespace(), key.key()),
@@ -66,20 +66,20 @@ impl AssetScope {
         .with_mode(NodeImageMode::Stretch)
     }
     #[inline]
-    fn scene<'a>(
+    fn scene<'path>(
         &self,
         asset_server: &AssetServer,
-        path: impl Into<&'a str>,
+        path: impl Into<&'path str>,
         label: usize,
     ) -> Handle<Scene> {
         self.model(asset_server, path, GltfAssetLabel::Scene(label))
     }
     #[inline]
-    fn animate<'a>(
+    fn animate<'path>(
         &self,
         animation_player: &mut AnimationPlayer,
         asset_server: &AssetServer,
-        path: impl Into<&'a str>,
+        path: impl Into<&'path str>,
         label: usize,
     ) -> AnimationGraphHandle {
         let (graph, index) = AnimationGraph::from_clip(self.animation(asset_server, path, label));
@@ -87,23 +87,27 @@ impl AssetScope {
         AnimationGraphHandle(asset_server.add(graph))
     }
     #[inline]
-    fn animation<'a>(
+    fn animation<'path>(
         &self,
         asset_server: &AssetServer,
-        path: impl Into<&'a str>,
+        path: impl Into<&'path str>,
         label: usize,
     ) -> Handle<AnimationClip> {
         self.model(asset_server, path, GltfAssetLabel::Animation(label))
     }
     #[inline]
-    fn image<'a>(&self, asset_server: &AssetServer, path: impl Into<&'a str>) -> Handle<Image> {
+    fn image<'path>(
+        &self,
+        asset_server: &AssetServer,
+        path: impl Into<&'path str>,
+    ) -> Handle<Image> {
         asset_server.load(self.images_root.resolve(path.into()).unwrap())
     }
     #[inline]
-    fn model<'a, M: Asset>(
+    fn model<'path, M: Asset>(
         &self,
         asset_server: &AssetServer,
-        path: impl Into<&'a str>,
+        path: impl Into<&'path str>,
         label: GltfAssetLabel,
     ) -> Handle<M> {
         asset_server.load(
@@ -176,7 +180,7 @@ fn folder_loaded_listener(
     }
 }
 
-pub(crate) fn assets_plugin(app: &mut App) {
+pub(in crate) fn assets_plugin(app: &mut App) {
     app.add_message::<AssetLoadRequest>()
         .add_message::<AssetUnloadRequest>()
         .add_message::<AssetLoadedMessage>()

@@ -1,6 +1,6 @@
+use crate::dim::actor::living::living_actor;
+use crate::dim::LOBBY;
 use crate::utils::NamespacedKey;
-use crate::world::LOBBY;
-use crate::world::entity::living::living_entity;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use std::collections::HashMap;
@@ -12,8 +12,8 @@ static MODEL_KEY: LazyLock<NamespacedKey> = LazyLock::new(|| NamespacedKey::new_
 
 pub fn dummy(asset_server: &AssetServer) -> impl Bundle {
     (
-        living_entity(&ATTRIBUTES),
+        living_actor(&ATTRIBUTES),
         Collider::cuboid(1., 3., 1.),
-        SceneRoot(LOBBY.assets().entity_scene(asset_server, &MODEL_KEY, 0)),
+        SceneRoot(LOBBY.assets().actor_scene(asset_server, &MODEL_KEY, 0)),
     )
 }

@@ -1,14 +1,15 @@
+pub mod dim;
+pub mod input;
 pub mod registry;
 mod ui;
 pub mod utils;
-pub mod world;
 
-use avian3d::PhysicsPlugins;
 use avian3d::prelude::PhysicsSchedule;
-use bevy::DefaultPlugins;
+use avian3d::PhysicsPlugins;
 use bevy::image::ImageSamplerDescriptor;
 use bevy::prelude::*;
 use bevy::winit::WINIT_WINDOWS;
+use bevy::DefaultPlugins;
 use bevy_tnua::prelude::TnuaControllerPlugin;
 use bevy_tnua_avian3d::TnuaAvian3dPlugin;
 use std::path::MAIN_SEPARATOR_STR;
@@ -18,10 +19,10 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 enum GameState {
+    Dimension,
     #[default]
     Loading,
     MainMenu,
-    World,
 }
 
 // TODO: The initial loading logic is a bit messy. Someone refactor it later
@@ -43,10 +44,10 @@ fn main() {
         .add_plugins(PhysicsPlugins::default())
         .add_plugins(TnuaControllerPlugin::new(PhysicsSchedule))
         .add_plugins(TnuaAvian3dPlugin::new(PhysicsSchedule))
+        .add_plugins(dim::plugin)
+        .add_plugins(input::input_plugin)
         .add_plugins(ui::plugin)
         .add_plugins(utils::assets::assets_plugin)
-        .add_plugins(utils::input::input_plugin)
-        .add_plugins(world::plugin)
         .add_systems(
             Startup,
             |asset_images: Res<Assets<Image>>,

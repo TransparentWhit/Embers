@@ -1,5 +1,5 @@
-use crate::GameState;
 use crate::utils::assets::AssetLoadedMessage;
+use crate::GameState;
 use bevy::app::App;
 use bevy::color::palettes::css::YELLOW;
 use bevy::prelude::*;
@@ -14,7 +14,7 @@ impl Loading {
     fn game_state(&self) -> GameState {
         match self {
             Loading::MainMenu => GameState::MainMenu,
-            Loading::World => GameState::World,
+            Loading::World => GameState::Dimension,
         }
     }
 }

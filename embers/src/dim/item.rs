@@ -2,6 +2,7 @@ pub mod inventory;
 
 use crate::registry::{DynamicRegistry, RegistryError};
 use crate::utils::{Keyed, NamespacedKey};
+use avian3d::prelude::*;
 use bevy::prelude::*;
 use embers_macros::identify;
 use std::collections::HashMap;
@@ -105,18 +106,21 @@ pub enum HandActionWield {
     Dual,
 }
 
-#[derive(Component, Clone, Debug)]
+type ItemActionEnvironment<'world, 'state, 'action> =
+    (&'action SpatialQuery<'world, 'state>, &'action Transform);
+
+#[derive(Component)]
 #[identify(key)]
 pub struct ItemAction {
     key: NamespacedKey,
-    pub on_begin: fn(),
-    pub on_end: fn(),
+    pub on_begin: Box<dyn FnMut(ItemActionEnvironment) + Send + Sync>,
+    pub on_end: Box<dyn FnMut(ItemActionEnvironment, Option<Duration>) + Send + Sync>,
     pub trigger: ItemActionTrigger,
     pub wield: ItemActionWield,
     pub duration: Duration,
 }
 
-#[derive(Component, Clone, Debug, Eq, PartialEq)]
+#[derive(Component, Eq, PartialEq)]
 pub struct ItemActions(HashMap<ItemActionSlot, ItemAction>);
 
 impl ItemActions {
@@ -130,10 +134,20 @@ impl ItemActions {
     pub fn get(&self, slot: ItemActionSlot) -> Option<&ItemAction> {
         self.0.get(&slot)
     }
+    pub fn get_mut(&mut self, slot: ItemActionSlot) -> Option<&mut ItemAction> {
+        self.0.get_mut(&slot)
+    }
 }
 
 #[derive(Component, Debug)]
 pub struct Weight(f32);
+
+/*pub fn melee(shape: &Collider) -> impl Fn(ItemActionEnvironment) {
+    let filter = SpatialQueryFilter::from_mask();
+    move |(spatial_query, transform)| {
+        spatial_query.shape_intersections(shape, transform.translation, transform.rotation, &filter)
+    }
+}*/
 
 pub fn sword() -> impl Bundle {
     (
@@ -141,12 +155,13 @@ pub fn sword() -> impl Bundle {
         Enchantments::default(),
         ItemActions::new([ItemAction {
             key: NamespacedKey::new_embers("sword_attack_0"),
-            on_begin: || {
+            on_begin: Box::new(|_| {
                 println!("started");
-            },
-            on_end: || {
+            }),
+            on_end: Box::new(|(spatial_query, transform), duration| {
+                //spatial_query.cast_shape(, transform.translation, transform.rotation, )
                 println!("ended");
-            },
+            }),
             trigger: ItemActionTrigger::Click,
             wield: ItemActionWield::Hands(HandActionWield::Single),
             duration: Duration::from_millis(500),

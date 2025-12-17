@@ -1,5 +1,4 @@
 pub mod assets;
-pub mod input;
 
 use bevy::asset::uuid::Uuid;
 use bevy::prelude::*;
@@ -83,7 +82,10 @@ impl NamespacedKey {
             separator_index: namespace.len(),
         }
     }
-    pub fn new<'a, 'b>(namespace: impl Into<&'a str>, key: impl Into<&'b str>) -> Self {
+    pub fn new<'namespace, 'key>(
+        namespace: impl Into<&'namespace str>,
+        key: impl Into<&'key str>,
+    ) -> Self {
         let namespace = namespace.into();
         assert!(
             NAMESPACE_PATTERN.is_match(namespace),
@@ -95,16 +97,16 @@ impl NamespacedKey {
         Self::new_internal(namespace, key)
     }
     #[inline]
-    pub fn new_namespaced<'a>(namespaced: &impl Namespaced, key: impl Into<&'a str>) -> Self {
+    pub fn new_namespaced<'key>(namespaced: &impl Namespaced, key: impl Into<&'key str>) -> Self {
         Self::new(namespaced.namespace(), key)
     }
     #[inline]
     pub(crate) fn new_embers(key: &str) -> Self {
         Self::new(Self::EMBERS_NAMESPACE, key)
     }
-    pub fn try_from_with<'a, 'b>(
-        value: impl Into<&'a str>,
-        default_namespace: impl Into<&'b str>,
+    pub fn try_from_with<'value, 'default_namespace>(
+        value: impl Into<&'value str>,
+        default_namespace: impl Into<&'default_namespace str>,
     ) -> Result<Self, IllegalNamespacedKeyError> {
         let value = value.into();
         let namespaced = Self::try_from(value);
@@ -125,15 +127,15 @@ impl NamespacedKey {
         Ok(Self::new_internal(default_namespace, value))
     }
     #[inline]
-    pub fn try_from_with_namespaced<'a>(
-        value: impl Into<&'a str>,
+    pub fn try_from_with_namespaced<'value>(
+        value: impl Into<&'value str>,
         default_namespace: &impl Namespaced,
     ) -> Result<Self, IllegalNamespacedKeyError> {
         Self::try_from_with(value, default_namespace.namespace())
     }
     #[inline]
-    pub(crate) fn try_from_with_embers<'a>(
-        value: impl Into<&'a str>,
+    pub(crate) fn try_from_with_embers<'value>(
+        value: impl Into<&'value str>,
     ) -> Result<Self, IllegalNamespacedKeyError> {
         Self::try_from_with(value, Self::EMBERS_NAMESPACE)
     }

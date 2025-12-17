@@ -1,17 +1,15 @@
-use crate::GameState;
-use crate::ui::{ScalableComponent, UIScale, scalable};
-use crate::utils::Keyed;
-use crate::utils::assets::GLOBAL_ASSETS;
-use crate::world::entity::item_entity::{ItemEntity, item_entity};
-use crate::world::entity::living::dummy::dummy;
-use crate::world::entity::living::player::{
-    HOTBAR_SLOTS, Player, PlayerInventory, SelectedHotbarSlot, player, process_input,
-};
-use crate::world::entity::tnt::tnt;
-use crate::world::item::inventory::{
+use crate::dim::actor::item_actor::{item_actor, ItemActor};
+use crate::dim::actor::living::dummy::dummy;
+use crate::dim::actor::living::player::{player, process_input_hotbar, Player, PlayerInventory, SelectedHotbarSlot, HOTBAR_SLOTS};
+use crate::dim::actor::tnt::tnt;
+use crate::dim::item::inventory::{
     InventorySlot, ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt,
 };
-use crate::world::item::{ItemStack, sword};
+use crate::dim::item::{sword, ItemStack};
+use crate::ui::{scalable, ScalableComponent, UIScale};
+use crate::utils::assets::GLOBAL_ASSETS;
+use crate::utils::Keyed;
+use crate::GameState;
 use avian3d::prelude::*;
 use bevy::camera::{ScalingMode, Viewport};
 use bevy::input::keyboard::KeyboardInput;
@@ -20,8 +18,8 @@ use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowResized};
 use std::ops::DerefMut;
 
-#[derive(States, Clone, Copy, Default, Eq, PartialEq, Debug, Hash)]
-enum WorldState {
+#[derive(States, Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
+enum DimensionState {
     Main,
     Options,
     #[default]
@@ -31,7 +29,7 @@ enum WorldState {
 #[derive(Component)]
 struct Ground;
 
-#[derive(Component)]
+#[derive(Component, Debug)]
 pub enum PlayerCamera {
     Isometric {
         distance: f32,
@@ -41,7 +39,7 @@ pub enum PlayerCamera {
     },
 }
 
-#[derive(Component)]
+#[derive(Component, Debug)]
 struct HotbarSlot(InventorySlot);
 
 #[derive(Component)]
@@ -60,7 +58,7 @@ fn init(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     commands.spawn((
-        DespawnOnExit(GameState::World),
+        DespawnOnExit(GameState::Dimension),
         Transform::default(),
         Node {
             width: percent(100),
@@ -321,10 +319,10 @@ fn update_hotbar_selection(
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(
-        OnEnter(GameState::World),
+        OnEnter(GameState::Dimension),
         (init, resize_camera, |mut commands: Commands| {
             let sword = commands.spawn(sword()).id();
-            commands.spawn(item_entity(sword)).add_child(sword);
+            commands.spawn(item_actor(sword)).add_child(sword);
         })
             .chain(),
     );
@@ -332,11 +330,11 @@ pub(super) fn plugin(app: &mut App) {
         Update,
         (|mut commands: Commands,
           mut player_inv: Single<(Entity, &PlayerInventory)>,
-          item_entities: Query<Entity, (With<ItemEntity>, Without<PlayerInventory>)>| {
+          item_entities: Query<Entity, (With<ItemActor>, Without<PlayerInventory>)>| {
             let (inv_entity, inv) = player_inv.deref_mut();
             for item_entity in item_entities.iter() {
                 commands.move_item(
-                    ItemSource::item_entity(item_entity),
+                    ItemSource::item_actor(item_entity),
                     ItemDestination::inventory_range(*inv_entity, 0..3, inv),
                     ItemMoveQuantity::All,
                 );
@@ -346,7 +344,7 @@ pub(super) fn plugin(app: &mut App) {
     );
     app.add_systems(Update, resize_camera.run_if(on_message::<WindowResized>));
     app.add_systems(Update, update_player_camera);
-    app.add_systems(Update, update_hotbar.after(process_input));
+    app.add_systems(Update, update_hotbar.after(process_input_hotbar));
     app.add_message::<HotbarSelectionUpdated>();
     app.add_systems(Update, update_hotbar_selection);
 }

@@ -1,7 +1,7 @@
-use super::entity;
+use super::actor;
 use avian3d::prelude::RigidBody;
 use bevy::prelude::*;
 
 pub fn projectile() -> impl Bundle {
-    (entity(), RigidBody::Dynamic)
+    (actor(), RigidBody::Dynamic)
 }

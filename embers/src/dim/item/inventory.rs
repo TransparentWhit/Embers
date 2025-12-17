@@ -1,20 +1,19 @@
+use crate::dim::actor::item_actor::ItemActor;
+use crate::dim::item::{ItemComponent, ItemStack, MaxStackSize, StackCount};
 use crate::registry::DynamicRegistry;
 use crate::utils::Marker;
-use crate::world::entity::item_entity::ItemEntity;
-use crate::world::item::{ItemComponent, ItemStack, MaxStackSize, StackCount};
 use bevy::prelude::*;
 use std::any::type_name;
 use std::marker::PhantomData;
 use std::ops::{
-    DerefMut, Index, IndexMut, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo,
-    RangeToInclusive,
+    Index, IndexMut, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
 };
 use thiserror::Error;
 
 pub type InventorySlot = i8;
 
 #[derive(Component)]
-pub struct Inventory<const N: usize, M: Marker = ()>([Option<Entity>; N], PhantomData<M>);
+pub struct Inventory<const N: usize, M: Marker>([Option<Entity>; N], PhantomData<M>);
 
 impl<const N: usize, M: Marker> Inventory<N, M> {
     pub fn new() -> Self {
@@ -131,12 +130,12 @@ pub enum ItemSource<const N: usize, M: Marker> {
     // TODO: Use range when #125687 stabilizes
     InventoryRange(Entity, (InventorySlot, InventorySlot), PhantomData<M>),
     InventorySlot(Entity, InventorySlot, PhantomData<M>),
-    ItemEntity(Entity),
+    ItemActor(Entity),
 }
 
 impl ItemSource<0, ()> {
-    pub fn item_entity(item_entity: Entity) -> Self {
-        Self::ItemEntity(item_entity)
+    pub fn item_actor(item_actor: Entity) -> Self {
+        Self::ItemActor(item_actor)
     }
 }
 
@@ -153,9 +152,9 @@ impl<const N: usize, M: Marker> ItemSource<N, M> {
     }
     fn verify_existence(&self, world: &World) -> Result<(), InvalidItemHolderError> {
         let entity = *match self {
-            Self::InventoryRange(inventory, _, _) => inventory,
-            Self::InventorySlot(inventory, _, _) => inventory,
-            Self::ItemEntity(item_entity) => item_entity,
+            Self::InventoryRange(inventory, _range, _) => inventory,
+            Self::InventorySlot(inventory, _slot, _) => inventory,
+            Self::ItemActor(item_actor) => item_actor,
         };
         let entity_ref = world
             .get_entity(entity)
@@ -170,9 +169,9 @@ impl<const N: usize, M: Marker> ItemSource<N, M> {
                     ));
                 }
             }
-            Self::ItemEntity(..) => {
-                if !entity_ref.contains::<ItemEntity>() {
-                    return Err(InvalidItemHolderError::NotAnItemEntity(entity));
+            Self::ItemActor(..) => {
+                if !entity_ref.contains::<ItemActor>() {
+                    return Err(InvalidItemHolderError::NotAnItemActor(entity));
                 }
             }
         }
@@ -181,12 +180,12 @@ impl<const N: usize, M: Marker> ItemSource<N, M> {
     fn single(&self) -> SingleItemSource<N, M> {
         match *self {
             Self::InventoryRange(..) => {
-                panic!("An inventory rannge can not be interpreted as a single item slot")
+                panic!("An inventory range can not be interpreted as a single item slot")
             }
             Self::InventorySlot(inventory, slot, _) => {
                 SingleItemSource::InventorySlot(inventory, slot, PhantomData)
             }
-            Self::ItemEntity(item_entity) => SingleItemSource::ItemEntity(item_entity),
+            Self::ItemActor(item_actor) => SingleItemSource::ItemActor(item_actor),
         }
     }
 }
@@ -196,12 +195,12 @@ pub enum ItemDestination<const N: usize, M: Marker> {
     // TODO: Use range when #125687 stabilizes
     InventoryRange(Entity, (InventorySlot, InventorySlot), PhantomData<M>),
     InventorySlot(Entity, InventorySlot, PhantomData<M>),
-    ItemEntity(Entity),
+    ItemActor(Entity),
 }
 
 impl ItemDestination<0, ()> {
-    pub fn item_entity(item_entity: Entity) -> Self {
-        Self::ItemEntity(item_entity)
+    pub fn item_actor(item_actor: Entity) -> Self {
+        Self::ItemActor(item_actor)
     }
 }
 
@@ -218,9 +217,9 @@ impl<const N: usize, M: Marker> ItemDestination<N, M> {
     }
     fn verify_existence(&self, world: &World) -> Result<(), InvalidItemHolderError> {
         let entity = *match self {
-            Self::InventoryRange(inventory, _, _) => inventory,
-            Self::InventorySlot(inventory, _, _) => inventory,
-            Self::ItemEntity(item_entity) => item_entity,
+            Self::InventoryRange(inventory, _range, _) => inventory,
+            Self::InventorySlot(inventory, _slot, _) => inventory,
+            Self::ItemActor(item_actor) => item_actor,
         };
         let entity_ref = world
             .get_entity(entity)
@@ -235,9 +234,9 @@ impl<const N: usize, M: Marker> ItemDestination<N, M> {
                     ));
                 }
             }
-            Self::ItemEntity(..) => {
-                if !entity_ref.contains::<ItemEntity>() {
-                    return Err(InvalidItemHolderError::NotAnItemEntity(entity));
+            Self::ItemActor(..) => {
+                if !entity_ref.contains::<ItemActor>() {
+                    return Err(InvalidItemHolderError::NotAnItemActor(entity));
                 }
             }
         }
@@ -251,7 +250,7 @@ impl<const N: usize, M: Marker> ItemDestination<N, M> {
             Self::InventorySlot(inventory, slot, _) => {
                 SingleItemDestination::InventorySlot(inventory, slot, PhantomData)
             }
-            Self::ItemEntity(item_entity) => SingleItemDestination::ItemEntity(item_entity),
+            Self::ItemActor(item_actor) => SingleItemDestination::ItemActor(item_actor),
         }
     }
 }
@@ -262,8 +261,8 @@ enum InvalidItemHolderError {
     NonexistentEntity(Entity),
     #[error("The specified entity ({0}) doesn't contain an inventory<{1}, {2}> component")]
     NotAnInventory(Entity, usize, &'static str),
-    #[error("The specified entity ({0}) doesn't contain an item entity component")]
-    NotAnItemEntity(Entity),
+    #[error("The specified entity ({0}) doesn't contain an item actor component")]
+    NotAnItemActor(Entity),
     #[error("Illegal range")]
     IllegalRange,
 }
@@ -277,7 +276,7 @@ pub enum ItemMoveQuantity {
 
 enum SingleItemSource<const N: usize, M: Marker> {
     InventorySlot(Entity, InventorySlot, PhantomData<M>),
-    ItemEntity(Entity),
+    ItemActor(Entity),
 }
 
 impl<const N: usize, M: Marker> SingleItemSource<N, M> {
@@ -286,9 +285,7 @@ impl<const N: usize, M: Marker> SingleItemSource<N, M> {
             Self::InventorySlot(inventory, slot, _) => {
                 world.get_mut::<Inventory<N, M>>(inventory).unwrap()[slot] = Some(item)
             }
-            Self::ItemEntity(item_entity) => {
-                world.get_mut::<ItemEntity>(item_entity).unwrap().0 = item
-            }
+            Self::ItemActor(item_actor) => world.get_mut::<ItemActor>(item_actor).unwrap().0 = item,
         };
     }
     /// Call this AFTER the relationship between the owner and the item has been removed
@@ -297,14 +294,14 @@ impl<const N: usize, M: Marker> SingleItemSource<N, M> {
             Self::InventorySlot(inventory, slot, _) => {
                 world.get_mut::<Inventory<N, M>>(inventory).unwrap()[slot] = None
             }
-            Self::ItemEntity(item_entity) => world.entity_mut(item_entity).despawn(),
+            Self::ItemActor(item_actor) => world.entity_mut(item_actor).despawn(),
         };
     }
 }
 
 enum SingleItemDestination<const N: usize, M: Marker> {
     InventorySlot(Entity, InventorySlot, PhantomData<M>),
-    ItemEntity(Entity),
+    ItemActor(Entity),
 }
 
 impl<const N: usize, M: Marker> SingleItemDestination<N, M> {
@@ -313,9 +310,7 @@ impl<const N: usize, M: Marker> SingleItemDestination<N, M> {
             Self::InventorySlot(inventory, slot, _) => {
                 world.get_mut::<Inventory<N, M>>(inventory).unwrap()[slot] = Some(item)
             }
-            Self::ItemEntity(item_entity) => {
-                world.get_mut::<ItemEntity>(item_entity).unwrap().0 = item
-            }
+            Self::ItemActor(item_actor) => world.get_mut::<ItemActor>(item_actor).unwrap().0 = item,
         };
     }
     /// Call this AFTER the relationship between the owner and the item has been removed
@@ -324,47 +319,47 @@ impl<const N: usize, M: Marker> SingleItemDestination<N, M> {
             Self::InventorySlot(inventory, slot, _) => {
                 world.get_mut::<Inventory<N, M>>(inventory).unwrap()[slot] = None
             }
-            Self::ItemEntity(item_entity) => world.entity_mut(item_entity).despawn(),
+            Self::ItemActor(item_actor) => world.entity_mut(item_actor).despawn(),
         };
     }
 }
 
 pub struct MoveItemCommand<
-    const N_SOURCE: usize,
-    MSource: Marker,
-    const N_DESTINATION: usize,
-    MDestination: Marker,
+    const SOURCE_N: usize,
+    SourceM: Marker,
+    const DESTINATION_N: usize,
+    DestinationM: Marker,
 > {
-    source: ItemSource<N_SOURCE, MSource>,
-    destination: ItemDestination<N_DESTINATION, MDestination>,
+    source: ItemSource<SOURCE_N, SourceM>,
+    destination: ItemDestination<DESTINATION_N, DestinationM>,
     quantity: ItemMoveQuantity,
 }
 
 pub trait MoveItemCommandExt {
     fn move_item<
-        const N_SOURCE: usize,
-        MSource: Marker,
-        const N_DESTINATION: usize,
-        MDestination: Marker,
+        const SOURCE_N: usize,
+        SourceM: Marker,
+        const DESTINATION_N: usize,
+        DestinationM: Marker,
     >(
         &mut self,
-        source: ItemSource<N_SOURCE, MSource>,
-        destination: ItemDestination<N_DESTINATION, MDestination>,
+        source: ItemSource<SOURCE_N, SourceM>,
+        destination: ItemDestination<DESTINATION_N, DestinationM>,
         quantity: ItemMoveQuantity,
     );
 }
 
-impl<'w, 's> MoveItemCommandExt for Commands<'w, 's> {
+impl<'world, 'state> MoveItemCommandExt for Commands<'world, 'state> {
     #[inline]
     fn move_item<
-        const N_SOURCE: usize,
-        MSource: Marker,
-        const N_DESTINATION: usize,
-        MDestination: Marker,
+        const SOURCE_N: usize,
+        SourceM: Marker,
+        const DESTINATION_N: usize,
+        DestinationM: Marker,
     >(
         &mut self,
-        source: ItemSource<N_SOURCE, MSource>,
-        destination: ItemDestination<N_DESTINATION, MDestination>,
+        source: ItemSource<SOURCE_N, SourceM>,
+        destination: ItemDestination<DESTINATION_N, DestinationM>,
         quantity: ItemMoveQuantity,
     ) {
         self.queue(MoveItemCommand {
@@ -375,8 +370,8 @@ impl<'w, 's> MoveItemCommandExt for Commands<'w, 's> {
     }
 }
 
-impl<const N_SOURCE: usize, MSource: Marker, const N_DESTINATION: usize, MDestination: Marker>
-    Command for MoveItemCommand<N_SOURCE, MSource, N_DESTINATION, MDestination>
+impl<const SOURCE_N: usize, SourceM: Marker, const DESTINATION_N: usize, DestinationM: Marker>
+    Command for MoveItemCommand<SOURCE_N, SourceM, DESTINATION_N, DestinationM>
 {
     fn apply(self, world: &mut World) {
         if let Err(err) = self.source.verify_existence(world) {
@@ -388,32 +383,32 @@ impl<const N_SOURCE: usize, MSource: Marker, const N_DESTINATION: usize, MDestin
             return;
         }
         let mut move_single =
-            |source: &mut SingleItemSource<N_SOURCE, MSource>,
-             destination: &mut SingleItemDestination<N_DESTINATION, MDestination>,
+            |source: &mut SingleItemSource<SOURCE_N, SourceM>,
+             destination: &mut SingleItemDestination<DESTINATION_N, DestinationM>,
              swap_if_not_stackable: bool|
              -> bool {
                 let (src_owner, src_slot) = match *source {
                     SingleItemSource::InventorySlot(inventory, slot, _) => (
                         inventory,
                         world
-                            .get::<Inventory<N_SOURCE, MSource>>(inventory)
+                            .get::<Inventory<SOURCE_N, SourceM>>(inventory)
                             .unwrap()[slot],
                     ),
-                    SingleItemSource::ItemEntity(item_entity) => (
-                        item_entity,
-                        Some(world.get::<ItemEntity>(item_entity).unwrap().0),
+                    SingleItemSource::ItemActor(item_actor) => (
+                        item_actor,
+                        Some(world.get::<ItemActor>(item_actor).unwrap().0),
                     ),
                 };
                 let (dst_owner, dst_slot) = match *destination {
                     SingleItemDestination::InventorySlot(inventory, slot, _) => (
                         inventory,
                         world
-                            .get::<Inventory<N_DESTINATION, MDestination>>(inventory)
+                            .get::<Inventory<DESTINATION_N, DestinationM>>(inventory)
                             .unwrap()[slot],
                     ),
-                    SingleItemDestination::ItemEntity(item_entity) => (
-                        item_entity,
-                        Some(world.get::<ItemEntity>(item_entity).unwrap().0),
+                    SingleItemDestination::ItemActor(item_actor) => (
+                        item_actor,
+                        Some(world.get::<ItemActor>(item_actor).unwrap().0),
                     ),
                 };
                 match (src_slot, dst_slot) {

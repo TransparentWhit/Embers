@@ -1,6 +1,6 @@
 pub mod loading_screen;
 pub mod main_menu;
-pub mod world;
+pub mod dim;
 
 use bevy::ecs::bundle::NoBundleEffect;
 use bevy::ecs::component::Mutable;
@@ -88,5 +88,5 @@ pub(super) fn plugin(app: &mut App) {
             Update,
             (rescale_components::<Node>, rescale_components::<Outline>),
         )
-        .add_plugins((loading_screen::plugin, main_menu::plugin, world::plugin));
+        .add_plugins((loading_screen::plugin, main_menu::plugin, dim::plugin));
 }

@@ -1,6 +1,6 @@
-use bevy::input::ButtonState;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::MouseButtonInput;
+use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bevy::time::Stopwatch;
 use std::collections::{HashMap, HashSet};
@@ -45,7 +45,7 @@ button_input_mut!(clear_just_pressed);
 button_input!(just_released);
 button_input_mut!(clear_just_released);
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum InputButton {
     Keycode(KeyCode),
     MouseButton(MouseButton),
@@ -164,7 +164,7 @@ fn track_double_clicks(
     }
 }
 
-pub(crate) fn input_plugin(app: &mut App) {
+pub(super) fn input_plugin(app: &mut App) {
     app.insert_resource(DoubleClicks::default())
         .add_systems(PreUpdate, track_double_clicks);
 }

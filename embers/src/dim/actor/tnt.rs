@@ -1,6 +1,6 @@
-use super::entity;
-use crate::utils::NamespacedKey;
+use super::actor;
 use crate::utils::assets::GLOBAL_ASSETS;
+use crate::utils::NamespacedKey;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use std::sync::LazyLock;
@@ -19,7 +19,7 @@ impl Default for Fuse {
 const FLASH_INTERVAL: f32 = 0.5;
 const TWO_FLASH_INTERVALS: f32 = FLASH_INTERVAL * 2.0;
 
-pub(in crate::world::entity) fn fuse(
+pub(in crate::dim::actor) fn fuse(
     mut commands: Commands,
     mut query: Query<(Entity, &mut AnimationPlayer, Mut<Fuse>)>,
     asset_server: Res<AssetServer>,
@@ -27,7 +27,7 @@ pub(in crate::world::entity) fn fuse(
 ) {
     for (entity, mut animation_player, mut fuse) in query.iter_mut() {
         if fuse.is_added() {
-            commands.entity(entity).insert(GLOBAL_ASSETS.animate_entity(
+            commands.entity(entity).insert(GLOBAL_ASSETS.animate_actor(
                 &mut animation_player,
                 &asset_server,
                 &MODEL_KEY,
@@ -43,10 +43,10 @@ pub(in crate::world::entity) fn fuse(
 
 pub fn tnt(asset_server: &AssetServer) -> impl Bundle {
     (
-        entity(),
+        actor(),
         Fuse::default(),
         AnimationPlayer::default(),
-        SceneRoot(GLOBAL_ASSETS.entity_scene(asset_server, &MODEL_KEY, 0)),
+        SceneRoot(GLOBAL_ASSETS.actor_scene(asset_server, &MODEL_KEY, 0)),
         Collider::cuboid(1.0, 1.0, 1.0),
         RigidBody::Dynamic,
     )

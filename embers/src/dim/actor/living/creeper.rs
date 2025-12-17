@@ -1,5 +1,5 @@
+use crate::dim::actor::living::living_actor;
 use crate::utils::NamespacedKey;
-use crate::world::entity::living::living_entity;
 use avian3d::prelude::Collider;
 use bevy::prelude::*;
 use std::collections::HashMap;
@@ -13,7 +13,7 @@ pub struct Creeper {}
 
 pub fn creeper() -> impl Bundle {
     (
-        living_entity(&ATTRIBUTES),
+        living_actor(&ATTRIBUTES),
         Collider::cylinder(0.5, 1.7),
         Creeper {},
     )
