@@ -4,12 +4,12 @@ pub mod registry;
 mod ui;
 pub mod utils;
 
-use avian3d::prelude::PhysicsSchedule;
 use avian3d::PhysicsPlugins;
+use avian3d::prelude::PhysicsSchedule;
+use bevy::DefaultPlugins;
 use bevy::image::ImageSamplerDescriptor;
 use bevy::prelude::*;
 use bevy::winit::WINIT_WINDOWS;
-use bevy::DefaultPlugins;
 use bevy_tnua::prelude::TnuaControllerPlugin;
 use bevy_tnua_avian3d::TnuaAvian3dPlugin;
 use std::path::MAIN_SEPARATOR_STR;

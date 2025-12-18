@@ -1,6 +1,6 @@
 use super::actor;
-use crate::utils::assets::GLOBAL_ASSETS;
 use crate::utils::NamespacedKey;
+use crate::utils::assets::GLOBAL_ASSETS;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use std::sync::LazyLock;

@@ -12,12 +12,18 @@ use thiserror::Error;
 
 pub type InventorySlot = i8;
 
-#[derive(Component)]
+#[derive(Component, Debug)]
 pub struct Inventory<const N: usize, M: Marker>([Option<Entity>; N], PhantomData<M>);
+
+impl<const N: usize, M: Marker> Default for Inventory<N, M> {
+    fn default() -> Self {
+        Self([const { None }; N], PhantomData)
+    }
+}
 
 impl<const N: usize, M: Marker> Inventory<N, M> {
     pub fn new() -> Self {
-        Self([const { None }; N], PhantomData)
+        Default::default()
     }
 }
 

@@ -1,15 +1,17 @@
-use crate::dim::actor::item_actor::{item_actor, ItemActor};
+use crate::GameState;
+use crate::dim::actor::item_actor::{ItemActor, item_actor};
 use crate::dim::actor::living::dummy::dummy;
-use crate::dim::actor::living::player::{player, process_input_hotbar, Player, PlayerInventory, SelectedHotbarSlot, HOTBAR_SLOTS};
+use crate::dim::actor::living::player::{
+    HOTBAR_SLOTS, Player, PlayerInventory, SelectedHotbarSlot, player, process_input_hotbar,
+};
 use crate::dim::actor::tnt::tnt;
 use crate::dim::item::inventory::{
     InventorySlot, ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt,
 };
-use crate::dim::item::{sword, ItemStack};
-use crate::ui::{scalable, ScalableComponent, UIScale};
-use crate::utils::assets::GLOBAL_ASSETS;
+use crate::dim::item::{ItemStack, sword};
+use crate::ui::{ScalableComponent, UIScale, scalable};
 use crate::utils::Keyed;
-use crate::GameState;
+use crate::utils::assets::GLOBAL_ASSETS;
 use avian3d::prelude::*;
 use bevy::camera::{ScalingMode, Viewport};
 use bevy::input::keyboard::KeyboardInput;
@@ -266,8 +268,6 @@ fn update_hotbar(
     if !player_inventory.is_changed() {
         return;
     }
-    let player_inventory = player_inventory;
-    let _: Mut<ImageNode>;
     *main_hand_slot.into_inner() = match player_inventory.main_hand() {
         Some(item) => GLOBAL_ASSETS.item_image(
             &asset_server,

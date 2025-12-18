@@ -34,6 +34,23 @@ fn physics_living() -> Physics {
                 CollisionLayer::Environment,
             ],
         ),
+        Dominance(2),
+        LOCK_XZ_ROTATION,
+        RigidBody::Dynamic,
+    )
+}
+
+fn physics_miscellaneous() -> Physics {
+    (
+        CollisionLayers::new(
+            CollisionLayer::MiscellaneousActor,
+            [
+                CollisionLayer::LivingActor,
+                CollisionLayer::MiscellaneousActor,
+                CollisionLayer::Projectile,
+                CollisionLayer::Environment,
+            ],
+        ),
         Dominance(1),
         LOCK_XZ_ROTATION,
         RigidBody::Dynamic,

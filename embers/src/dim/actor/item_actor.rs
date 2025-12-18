@@ -1,5 +1,5 @@
-use crate::dim::actor::actor;
 use crate::dim::CollisionLayer;
+use crate::dim::actor::actor;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 

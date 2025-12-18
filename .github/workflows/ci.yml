@@ -25,7 +25,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ ubuntu-latest, windows-latest ]
         toolchain:
           - stable
     steps:
@@ -53,3 +53,15 @@ jobs:
         run: cargo clippy --verbose --workspace --all-targets --all-features --release
       - name: Build [Release]
         run: cargo build --verbose --release
+      - name: Prepare
+        shell: bash
+        run: |
+          mkdir -p dist
+          if [ "${{ runner.os }}" == "Windows" ]; then EXT=".exe"; fi
+          cp "target/release/embers$EXT" "dist/embers-${{ runner.arch }}-${{ runner.os }}$EXT"
+      - name: Upload
+        uses: actions/upload-artifact@v6
+        with:
+          name: embers-${{ runner.arch }}-${{ runner.os }}
+          compression-level: 9
+          path: dist/embers-*

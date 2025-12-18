@@ -1,5 +1,5 @@
-use crate::utils::{const_hash_set, ConstHashSet, Namespaced, NamespacedKey};
 use crate::GameState;
+use crate::utils::{ConstHashSet, Namespaced, NamespacedKey, const_hash_set};
 use bevy::app::App;
 use bevy::asset::{AssetPath, LoadedFolder};
 use bevy::prelude::*;
@@ -180,7 +180,7 @@ fn folder_loaded_listener(
     }
 }
 
-pub(in crate) fn assets_plugin(app: &mut App) {
+pub(crate) fn assets_plugin(app: &mut App) {
     app.add_message::<AssetLoadRequest>()
         .add_message::<AssetUnloadRequest>()
         .add_message::<AssetLoadedMessage>()

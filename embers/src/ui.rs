@@ -1,6 +1,6 @@
+pub mod dim;
 pub mod loading_screen;
 pub mod main_menu;
-pub mod dim;
 
 use bevy::ecs::bundle::NoBundleEffect;
 use bevy::ecs::component::Mutable;

@@ -4,8 +4,8 @@ pub mod dummy;
 pub mod player;
 
 use super::actor;
-use crate::dim::actor::living::attributes::AttributeInstance;
 use crate::dim::CollisionLayer;
+use crate::dim::actor::living::attributes::AttributeInstance;
 use crate::utils::NamespacedKey;
 use avian3d::prelude::*;
 use bevy::prelude::*;

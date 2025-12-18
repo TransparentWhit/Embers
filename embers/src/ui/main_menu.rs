@@ -1,8 +1,8 @@
+use crate::GameState;
 use crate::dim::LOBBY;
 use crate::ui::loading_screen::Loading;
 use crate::ui::*;
 use crate::utils::assets::AssetLoadRequest;
-use crate::GameState;
 use bevy::color::palettes::basic::YELLOW;
 use bevy::prelude::*;
 use bevy::sprite::Text2dShadow;

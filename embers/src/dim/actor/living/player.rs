@@ -1,14 +1,14 @@
-use super::{living_actor, Attributes};
+use super::{Attributes, living_actor};
+use crate::GameState;
 use crate::dim::actor::living::attributes::embers;
 use crate::dim::item::inventory::{
     Inventory, InventorySlot, ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt,
 };
 use crate::dim::item::{HandActionWield, ItemAction, ItemActionTrigger, ItemActionWield};
 use crate::dim::item::{ItemActionSlot, ItemActions};
-use crate::input::{just_pressed, pressed, DoubleClicks, InputButton};
+use crate::input::{DoubleClicks, InputButton, just_pressed, pressed};
 use crate::ui::dim::{HotbarSelectionUpdated, PlayerCamera};
 use crate::utils::NamespacedKey;
-use crate::GameState;
 use avian3d::prelude::*;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
@@ -76,7 +76,7 @@ fn process_input_item_actions(
     mut item_actions: Query<&mut ItemActions>,
     time: Res<Time>,
 ) {
-    let (ref inventory, ref selected_hotbar_slot, ref mut action_status, ref transform) = *player;
+    let (inventory, selected_hotbar_slot, ref mut action_status, transform) = *player;
     let active_item_trigger = |control: &RwLock<InputButton>,
                                double_clicks: &DoubleClicks,
                                keys: &ButtonInput<KeyCode>,
@@ -106,25 +106,40 @@ fn process_input_item_actions(
                         EquipmentSlot::Armor => true,
                     };
                     if can_activate {
-                        *status = SlotActionStatus::activate(trigger);
-                        if let Some(mut action) = item_action {
+                        if let Some(action) = item_action {
+                            *status = SlotActionStatus::activate(trigger);
+                            println!("flag1");
                             (action.on_begin)((&spatial_query, transform));
                         }
                     }
                 } else if let SlotActionStatus::Active {
-                    trigger: current_trigger,
+                    timer,
+                    trigger: previous_trigger,
                     ..
                 } = status
                 {
-                    if *current_trigger != trigger {
-                        *status = SlotActionStatus::activate(trigger);
+                    if let Some(action) = item_action {
+                        let new_trigger = trigger != *previous_trigger;
+                        let finished = timer.elapsed() >= action.duration;
+                        if finished || new_trigger {
+                            println!("flag2 {} {} {:?} {:?}", finished, new_trigger, *previous_trigger, trigger);
+                            (action.on_end)((&spatial_query, transform), if finished { None } else { Some(timer.elapsed()) });
+                            *status = SlotActionStatus::activate(trigger);
+                            (action.on_begin)((&spatial_query, transform));
+                        }
+                    } else {
+                        *status = SlotActionStatus::idle();
                     }
                 }
             }
             None => {
-                if status.is_active() {
-                    if let Some(mut action) = item_action {
-                        (action.on_end)((&spatial_query, transform), None); // todo
+                if let SlotActionStatus::Active { timer, .. } = status {
+                    if let Some(action) = item_action {
+                            println!("flag3");
+                        (action.on_end)(
+                            (&spatial_query, transform),
+                            Some(timer.elapsed()).take_if(|used| *used >= action.duration),
+                        );
                     }
                     *status = SlotActionStatus::idle();
                 }
@@ -187,7 +202,7 @@ pub fn process_input_hotbar(
     mut player: Single<(Entity, &PlayerInventory, &mut SelectedHotbarSlot), With<Player>>,
     mut hotbar_selection_updated_message: MessageWriter<HotbarSelectionUpdated>,
 ) {
-    let (player, ref inventory, ref mut selected_hotbar_slot) = *player;
+    let (player, inventory, ref mut selected_hotbar_slot) = *player;
     let prev_hotbar_selection = selected_hotbar_slot.0;
     for hotbar_slot in 0..HOTBAR_SLOTS {
         if just_pressed(&CONTROLS_HOTBARS[hotbar_slot as usize], &keys, &mouse) {
@@ -220,7 +235,7 @@ fn process_input_movement(
     mut player: Single<(&Attributes, &mut TnuaController), With<Player>>,
     player_camera: Single<(&Camera, &PlayerCamera), With<PlayerCamera>>,
 ) {
-    let (ref attributes, ref mut controller) = *player;
+    let (attributes, ref mut controller) = *player;
     let forward = if pressed(&CONTROLS_MOVEMENT, &keys, &mouse)
         && let Some(physical_cursor_position) = window.physical_cursor_position()
     {

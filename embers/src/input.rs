@@ -1,6 +1,6 @@
-use bevy::input::keyboard::KeyboardInput;
-use bevy::input::mouse::MouseButtonInput;
 use bevy::input::ButtonState;
+use bevy::input::keyboard::{keyboard_input_system, KeyboardInput};
+use bevy::input::mouse::{mouse_button_input_system, MouseButtonInput};
 use bevy::prelude::*;
 use bevy::time::Stopwatch;
 use std::collections::{HashMap, HashSet};
@@ -131,14 +131,14 @@ impl DoubleClicks {
 
 fn track_double_clicks(
     mut double_clicks: ResMut<DoubleClicks>,
-    mut keyboard_inputs: MessageReader<KeyboardInput>,
-    mut mouse_button_inputs: MessageReader<MouseButtonInput>,
+    keyboard_inputs: Res<ButtonInput<KeyCode>>,
+    mouse_button_inputs: Res<ButtonInput<MouseButton>>,
     time: Res<Time>,
 ) {
     double_clicks.bypass_change_detection().clear();
     double_clicks.bypass_change_detection().tick(time.delta());
-    let mut track_input = |button: InputButton, state: &ButtonState| match state {
-        ButtonState::Pressed => match double_clicks.clicks.get_mut(&button) {
+    let mut track_input_just_pressed = |button: InputButton| {
+        match double_clicks.clicks.get_mut(&button) {
             Some(stopwatch) => {
                 stopwatch.reset();
                 double_clicks.just_started.insert(button);
@@ -147,15 +147,13 @@ fn track_double_clicks(
             None => {
                 double_clicks.clicks.insert(button, Stopwatch::new());
             }
-        },
-        ButtonState::Released => {
-            double_clicks.double_clicked.remove(&button);
-            double_clicks.just_ended.insert(button);
         }
     };
-    for KeyboardInput {
-        key_code, state, ..
-    } in keyboard_inputs.read()
+    let mut track_input_just_released = |button: InputButton| {
+        double_clicks.double_clicked.remove(&button);
+        double_clicks.just_ended.insert(button);
+    };
+    for B(key_code) in keyboard_inputs.get_just_pressed()
     {
         track_input(InputButton::Keycode(*key_code), state);
     }
@@ -166,7 +164,7 @@ fn track_double_clicks(
 
 pub(super) fn input_plugin(app: &mut App) {
     app.insert_resource(DoubleClicks::default())
-        .add_systems(PreUpdate, track_double_clicks);
+        .add_systems(PreUpdate, track_double_clicks.after(keyboard_input_system).after(mouse_button_input_system));
 }
 
 #[cfg(test)]

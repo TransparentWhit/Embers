@@ -1,5 +1,5 @@
-use crate::utils::assets::AssetLoadedMessage;
 use crate::GameState;
+use crate::utils::assets::AssetLoadedMessage;
 use bevy::app::App;
 use bevy::color::palettes::css::YELLOW;
 use bevy::prelude::*;

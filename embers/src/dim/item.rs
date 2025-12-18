@@ -160,7 +160,7 @@ pub fn sword() -> impl Bundle {
             }),
             on_end: Box::new(|(spatial_query, transform), duration| {
                 //spatial_query.cast_shape(, transform.translation, transform.rotation, )
-                println!("ended");
+                println!("ended {:?}", duration);
             }),
             trigger: ItemActionTrigger::Click,
             wield: ItemActionWield::Hands(HandActionWield::Single),
