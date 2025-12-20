@@ -4,7 +4,9 @@ use crate::dim::actor::living::attributes::embers;
 use crate::dim::item::inventory::{
     Inventory, InventorySlot, ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt,
 };
-use crate::dim::item::{HandActionWield, ItemActionTrigger, ItemActionWield, SlotItemActions};
+use crate::dim::item::{
+    HandActionWield, ItemActionEnvironment, ItemActionTrigger, ItemActionWield, SlotItemActions,
+};
 use crate::dim::item::{ItemActionSlot, ItemActions};
 use crate::input::{DoubleClicks, InputButton, just_pressed, pressed};
 use crate::ui::dim::PlayerCamera;
@@ -59,6 +61,7 @@ controls!(CONTROLS_SWAP_OFF_HAND, K@KeyF);
 controls!(CONTROLS_INVENTORY, K@KeyR);
 
 fn process_input_item_actions(
+    mut commands: Commands,
     spatial_query: SpatialQuery,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
@@ -78,6 +81,7 @@ fn process_input_item_actions(
     time: Res<Time>,
 ) {
     let (inventory, selected_hotbar_slot, ref mut action_status, transform) = *player;
+    let mut environment: ItemActionEnvironment = (&mut commands, &spatial_query, transform);
     let mut update_slot_action =
         |equipment_slot: EquipmentSlot, control: &RwLock<InputButton>, slot: Option<Entity>| {
             let mut trigger = if double_clicks.double_clicked(*control.read().unwrap()) {
@@ -145,7 +149,7 @@ fn process_input_item_actions(
                     if status.is_idle() {
                         if let Some(action) = item_action.get_mut(active_trigger) {
                             *status = SlotActionStatus::activate(active_trigger);
-                            (action.on_begin)((&spatial_query, transform));
+                            (action.on_begin)(&mut environment);
                         }
                     } else if let SlotActionStatus::Active {
                         timer,
@@ -156,7 +160,7 @@ fn process_input_item_actions(
                             let finished = timer.elapsed() >= action.duration;
                             if finished || active_trigger != *current_trigger {
                                 (action.on_end)(
-                                    (&spatial_query, transform),
+                                    &mut environment,
                                     if finished {
                                         None
                                     } else {
@@ -164,7 +168,7 @@ fn process_input_item_actions(
                                     },
                                 );
                                 *status = SlotActionStatus::activate(active_trigger);
-                                (action.on_begin)((&spatial_query, transform));
+                                (action.on_begin)(&mut environment);
                             }
                         } else if item_action.get(*current_trigger).is_none() {
                             *status = SlotActionStatus::idle();
@@ -175,7 +179,7 @@ fn process_input_item_actions(
                     if let SlotActionStatus::Active { timer, trigger } = status {
                         if let Some(action) = item_action.get_mut(*trigger) {
                             (action.on_end)(
-                                (&spatial_query, transform),
+                                &mut environment,
                                 Some(timer.elapsed()).take_if(|used| action.duration >= *used),
                             );
                         }

@@ -31,16 +31,7 @@ pub fn living_actor(attributes: &HashMap<NamespacedKey, f32>) -> impl Bundle {
         Attributes(
             attributes
                 .iter()
-                .map(|(key, base)| {
-                    (
-                        key.clone(),
-                        AttributeInstance {
-                            key: key.clone(),
-                            base: *base,
-                            modifiers: Default::default(),
-                        },
-                    )
-                })
+                .map(|(key, base)| (key.clone(), AttributeInstance::new(key.clone(), *base)))
                 .collect(),
         ),
         RigidBody::Dynamic,

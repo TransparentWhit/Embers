@@ -91,7 +91,12 @@ fn try_stack(
 ) -> ItemStackResult {
     let source_ref = world.entity(source);
     let target_ref = world.entity(target);
-    if !source_ref.contains::<ItemStack>() || !target_ref.contains::<ItemStack>() {
+    if source_ref
+        .get::<ItemStack>()
+        .zip(target_ref.get::<ItemStack>())
+        .map(|(source_stack, target_stack)| source_stack != target_stack)
+        .unwrap_or(true)
+    {
         return ItemStackResult::NotStackable;
     }
     if !world

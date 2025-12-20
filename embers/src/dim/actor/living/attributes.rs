@@ -16,20 +16,38 @@ pub mod embers {
 #[derive(Debug)]
 #[identify(key)]
 pub struct AttributeInstance {
-    pub(super) key: NamespacedKey,
-    pub base: f32,
-    pub modifiers: HashSet<AttributeModifier>,
+    key: NamespacedKey,
+    base: f32,
+    modifiers: HashSet<AttributeModifier>,
 }
 
 impl AttributeInstance {
+    pub fn new(key: NamespacedKey, base: f32) -> Self {
+        Self {
+            key,
+            base,
+            modifiers: Default::default(),
+        }
+    }
+    /// Creates a new virtual attribute instance.
+    ///
+    /// A virtual attribute instance is one that does not have a base value.
+    /// Getting the [value](Self::value) of a "virtual" attribute instance is undefined behavior.
+    #[inline]
+    pub fn new_virtual(key: NamespacedKey) -> Self {
+        Self::new(key, 1.)
+    }
+    #[inline]
     pub fn value(&self) -> f32 {
-        let mut base = self.base;
+        self.value_for(self.base)
+    }
+    pub fn value_for(&self, mut base: f32) -> f32 {
         let mut multiplier = 1f32;
         for modifier in &self.modifiers {
             match modifier.modification {
                 AttributeModification::AddValue(value) => base += value,
                 AttributeModification::AddMultipliedValue(multipled_value) => {
-                    multiplier *= 1f32 + multipled_value
+                    multiplier *= 1. + multipled_value
                 }
             }
         }

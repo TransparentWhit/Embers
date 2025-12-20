@@ -15,11 +15,13 @@ pub trait Marker: Clone + Send + Sync + 'static {}
 impl<T: Clone + Send + Sync + 'static> Marker for T {}
 
 pub type ConstHashMap<K, V> = HashMap<K, V, BuildHasherDefault<DefaultHasher>>;
+
 pub const fn const_hash_map<K, V>() -> ConstHashMap<K, V> {
     HashMap::with_hasher(BuildHasherDefault::new())
 }
 
 pub type ConstHashSet<T> = HashSet<T, BuildHasherDefault<DefaultHasher>>;
+
 pub const fn const_hash_set<T>() -> ConstHashSet<T> {
     HashSet::with_hasher(BuildHasherDefault::new())
 }
@@ -27,12 +29,15 @@ pub const fn const_hash_set<T>() -> ConstHashSet<T> {
 pub trait Named {
     fn name(&self) -> &str;
 }
+
 pub trait UniquelyIdentified {
     fn unique_id(&self) -> &Uuid;
 }
+
 pub trait Namespaced {
     fn namespace(&self) -> &str;
 }
+
 pub trait Keyed {
     fn key(&self) -> &NamespacedKey;
 }
@@ -45,12 +50,12 @@ impl<T> Keyed for (NamespacedKey, T) {
 
 #[derive(Debug, Error)]
 pub enum IllegalNamespacedKeyError {
-    #[error("Invalid namespace: {namespace}")]
-    IllegalNamespaceError { namespace: String },
-    #[error("Invalid key: {key}")]
-    IllegalKeyError { key: String },
-    #[error("Invalid namespaced key: {namespaced_key}")]
-    IllegalNamespacedKeyError { namespaced_key: String },
+    #[error("Invalid namespace: {0}")]
+    IllegalNamespace(String),
+    #[error("Invalid key: {0}")]
+    IllegalKey(String),
+    #[error("Invalid namespaced key: {0}")]
+    IllegalNamespacedKey(String),
 }
 
 #[derive(Component, Clone, Debug, Eq, Hash, PartialEq)]
@@ -58,15 +63,19 @@ pub struct NamespacedKey {
     namespaced_key: String,
     separator_index: usize,
 }
-pub static NAMESPACE_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\w+)$").unwrap());
-pub static KEY_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^([\w/]+)$").unwrap());
+
+pub static NAMESPACE_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^([A-Za-z0-9_]+)$").unwrap());
+pub static KEY_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^([A-Za-z0-9_/]+)$").unwrap());
 pub static NAMESPACED_KEY_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
-        r"^(?P<namespace>\w+){}(?P<key>[\w/]+)$",
+        r"^(?P<namespace>[A-Za-z0-9_]+){}(?P<key>[A-Za-z0-9_/]+)$",
         NamespacedKey::SEPARATOR
     ))
     .unwrap()
 });
+
 impl NamespacedKey {
     pub const SEPARATOR: &'static str = ":";
     const SEPARATOR_LEN: usize = Self::SEPARATOR.len();
@@ -82,6 +91,11 @@ impl NamespacedKey {
             separator_index: namespace.len(),
         }
     }
+    /// Creates a new [NamespacedKey] from the given `namespace` and `key`.
+    ///
+    /// # Panics
+    /// This panics if the given `namespace` or `key` is invalid. If you don't want to implicitly panic, use [try_from](TryFrom<&str>::try_from).
+    ///
     pub fn new<'namespace, 'key>(
         namespace: impl Into<&'namespace str>,
         key: impl Into<&'key str>,
@@ -96,6 +110,11 @@ impl NamespacedKey {
         assert!(KEY_PATTERN.is_match(key), "Invalid key: {}", key);
         Self::new_internal(namespace, key)
     }
+    /// Creates a new [NamespacedKey] from the given `namespaced` and `key`.
+    ///
+    /// # Panics
+    /// This panics if the given `key` is invalid. If you don't want to implicitly panic, use [try_from_with_namespaced](Self::try_from_with_namespaced).
+    ///
     #[inline]
     pub fn new_namespaced<'key>(namespaced: &impl Namespaced, key: impl Into<&'key str>) -> Self {
         Self::new(namespaced.namespace(), key)
@@ -104,6 +123,9 @@ impl NamespacedKey {
     pub(crate) fn new_embers(key: &str) -> Self {
         Self::new(Self::EMBERS_NAMESPACE, key)
     }
+    /// Attempts to create a new [NamespacedKey] from the given `value`.
+    ///
+    /// If `value` does not contain a namespace, `default_namespace` is used.
     pub fn try_from_with<'value, 'default_namespace>(
         value: impl Into<&'value str>,
         default_namespace: impl Into<&'default_namespace str>,
@@ -114,18 +136,19 @@ impl NamespacedKey {
             return namespaced;
         }
         if !KEY_PATTERN.is_match(value) {
-            return Err(IllegalNamespacedKeyError::IllegalKeyError {
-                key: value.to_string(),
-            });
+            return Err(IllegalNamespacedKeyError::IllegalKey(value.to_string()));
         }
         let default_namespace = default_namespace.into();
         if !NAMESPACE_PATTERN.is_match(default_namespace) {
-            return Err(IllegalNamespacedKeyError::IllegalNamespaceError {
-                namespace: default_namespace.to_string(),
-            });
+            return Err(IllegalNamespacedKeyError::IllegalNamespace(
+                default_namespace.to_string(),
+            ));
         }
         Ok(Self::new_internal(default_namespace, value))
     }
+    /// Attempts to create a new [NamespacedKey] from the given `value`.
+    ///
+    /// If `value` does not contain a namespace, the namespace of `default_namespace` is used.
     #[inline]
     pub fn try_from_with_namespaced<'value>(
         value: impl Into<&'value str>,
@@ -143,29 +166,274 @@ impl NamespacedKey {
         &self.namespaced_key[(self.separator_index + Self::SEPARATOR_LEN)..]
     }
 }
+
 impl Namespaced for NamespacedKey {
     fn namespace(&self) -> &str {
         &self.namespaced_key[..self.separator_index]
     }
 }
+
 impl fmt::Display for NamespacedKey {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}", self.namespaced_key)
     }
 }
+
 impl From<NamespacedKey> for String {
     fn from(value: NamespacedKey) -> Self {
         value.namespaced_key
     }
 }
+
 impl TryFrom<&str> for NamespacedKey {
     type Error = IllegalNamespacedKeyError;
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match NAMESPACED_KEY_PATTERN.captures(value) {
             Some(captures) => Ok(Self::new_internal(&captures["namespace"], &captures["key"])),
-            None => Err(IllegalNamespacedKeyError::IllegalNamespacedKeyError {
-                namespaced_key: value.to_string(),
-            }),
+            None => Err(IllegalNamespacedKeyError::IllegalNamespacedKey(
+                value.to_string(),
+            )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug)]
+    struct DummyNamespaced(String);
+
+    impl Namespaced for DummyNamespaced {
+        fn namespace(&self) -> &str {
+            &self.0
+        }
+    }
+
+    #[test]
+    fn namespace_pattern() {
+        assert!(NAMESPACE_PATTERN.is_match("embers"));
+        assert!(NAMESPACE_PATTERN.is_match("EmbErs"));
+        assert!(NAMESPACE_PATTERN.is_match("0ember5"));
+        assert!(NAMESPACE_PATTERN.is_match("_embers_"));
+        assert!(!NAMESPACE_PATTERN.is_match(""));
+        assert!(!NAMESPACE_PATTERN.is_match("not valid"));
+        assert!(!NAMESPACE_PATTERN.is_match("not-valid"));
+        assert!(!NAMESPACE_PATTERN.is_match("not.valid"));
+        assert!(!NAMESPACE_PATTERN.is_match("not:valid"));
+        assert!(!NAMESPACE_PATTERN.is_match("not/valid"));
+        assert!(!NAMESPACE_PATTERN.is_match("不valid"));
+    }
+
+    #[test]
+    fn key_pattern() {
+        assert!(KEY_PATTERN.is_match("utils"));
+        assert!(KEY_PATTERN.is_match("uTiLs"));
+        assert!(KEY_PATTERN.is_match("ut1l5"));
+        assert!(KEY_PATTERN.is_match("_utils_"));
+        assert!(KEY_PATTERN.is_match("/path/to/utils"));
+        assert!(!KEY_PATTERN.is_match(""));
+        assert!(!KEY_PATTERN.is_match("not valid"));
+        assert!(!KEY_PATTERN.is_match("not-valid"));
+        assert!(!KEY_PATTERN.is_match("not.valid"));
+        assert!(!KEY_PATTERN.is_match("not:valid"));
+        assert!(!KEY_PATTERN.is_match("不valid"));
+    }
+
+    #[test]
+    fn namespaced_key_pattern() {
+        let captures = NAMESPACED_KEY_PATTERN.captures("embers:utils").unwrap();
+        assert_eq!(captures.name("namespace").unwrap().as_str(), "embers");
+        assert_eq!(captures.name("key").unwrap().as_str(), "utils");
+
+        let captures = NAMESPACED_KEY_PATTERN.captures("_:__/_").unwrap();
+        assert_eq!(captures.name("namespace").unwrap().as_str(), "_");
+        assert_eq!(captures.name("key").unwrap().as_str(), "__/_");
+
+        let captures = NAMESPACED_KEY_PATTERN
+            .captures("998244353:0RdeR/0f/the_5tone")
+            .unwrap();
+        assert_eq!(captures.name("namespace").unwrap().as_str(), "998244353");
+        assert_eq!(captures.name("key").unwrap().as_str(), "0RdeR/0f/the_5tone");
+
+        assert!(!NAMESPACED_KEY_PATTERN.is_match(""));
+        assert!(!NAMESPACED_KEY_PATTERN.is_match(":"));
+        assert!(!NAMESPACED_KEY_PATTERN.is_match("embers:"));
+        assert!(!NAMESPACED_KEY_PATTERN.is_match(":utils"));
+        assert!(!NAMESPACED_KEY_PATTERN.is_match("embers_utils"));
+        assert!(!NAMESPACED_KEY_PATTERN.is_match("embers:utils:namespaced_key"));
+        assert!(!NAMESPACED_KEY_PATTERN.is_match("不valid"));
+    }
+
+    #[test]
+    fn namespacing_keying() {
+        let namespaced_key = NamespacedKey::new("embers", "utils");
+        assert_eq!(namespaced_key.namespace(), "embers");
+        assert_eq!(namespaced_key.separator_index, 6);
+        assert_eq!(namespaced_key.key(), "utils");
+
+        let namespaced_key =
+            NamespacedKey::new_namespaced(&DummyNamespaced("embers".to_string()), "utils");
+        assert_eq!(namespaced_key.namespace(), "embers");
+        assert_eq!(namespaced_key.separator_index, 6);
+        assert_eq!(namespaced_key.key(), "utils");
+
+        let namespaced_key = NamespacedKey::try_from("embers:utils").unwrap();
+        assert_eq!(namespaced_key.namespace(), "embers");
+        assert_eq!(namespaced_key.separator_index, 6);
+        assert_eq!(namespaced_key.key(), "utils");
+
+        let namespaced_key = NamespacedKey::try_from_with("__/_", "_").unwrap();
+        assert_eq!(namespaced_key.namespace(), "_");
+        assert_eq!(namespaced_key.separator_index, 1);
+        assert_eq!(namespaced_key.key(), "__/_");
+
+        let namespaced_key = NamespacedKey::try_from_with("_:__/_", "default").unwrap();
+        assert_eq!(namespaced_key.namespace(), "_");
+        assert_eq!(namespaced_key.separator_index, 1);
+        assert_eq!(namespaced_key.key(), "__/_");
+
+        let namespaced_key = NamespacedKey::try_from_with_namespaced(
+            "0RdeR/0f/the_5tone",
+            &DummyNamespaced("998244353".to_string()),
+        )
+        .unwrap();
+        assert_eq!(namespaced_key.namespace(), "998244353");
+        assert_eq!(namespaced_key.separator_index, 9);
+        assert_eq!(namespaced_key.key(), "0RdeR/0f/the_5tone");
+
+        let namespaced_key = NamespacedKey::try_from_with_namespaced(
+            "998244353:0RdeR/0f/the_5tone",
+            &DummyNamespaced("default".to_string()),
+        )
+        .unwrap();
+        assert_eq!(namespaced_key.namespace(), "998244353");
+        assert_eq!(namespaced_key.separator_index, 9);
+        assert_eq!(namespaced_key.key(), "0RdeR/0f/the_5tone");
+    }
+
+    #[test]
+    fn newing_namespaced_key() {
+        let key = NamespacedKey::new("embers", "utils");
+        assert_eq!(key.namespace(), "embers");
+        assert_eq!(key.key(), "utils");
+        assert_eq!(key.to_string(), "embers:utils");
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid namespace")]
+    fn newing_namespaced_key_invalid_namespace() {
+        NamespacedKey::new("not-valid", "utils");
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid key")]
+    fn newing_namespaced_key_invalid_key() {
+        NamespacedKey::new("embers", "not-valid");
+    }
+
+    #[test]
+    fn newing_namespaced_namespaced_key() {
+        let namespaced_key =
+            NamespacedKey::new_namespaced(&DummyNamespaced("embers".to_string()), "utils");
+        assert_eq!(namespaced_key.namespace(), "embers");
+        assert_eq!(namespaced_key.key(), "utils");
+    }
+
+    #[test]
+    fn trying_from_namespaced_key_valid() {
+        let namespaced_key = NamespacedKey::try_from("embers:utils").unwrap();
+        assert_eq!(namespaced_key.namespace(), "embers");
+        assert_eq!(namespaced_key.key(), "utils");
+    }
+
+    #[test]
+    fn trying_from_namespaced_key_invalid() {
+        assert!(NamespacedKey::try_from("embers:utils:namespaced_key").is_err());
+        assert!(NamespacedKey::try_from("embers_utils").is_err());
+        assert!(NamespacedKey::try_from("inval!d:utils").is_err());
+    }
+
+    #[test]
+    fn trying_from_with_default_namespace_namespaced_key() {
+        let namespaced_key = NamespacedKey::try_from_with("embers:utils", "default").unwrap();
+        assert_eq!(namespaced_key.namespace(), "embers");
+        assert_eq!(namespaced_key.key(), "utils");
+
+        let namespaced_key = NamespacedKey::try_from_with("utils", "default").unwrap();
+        assert_eq!(namespaced_key.namespace(), "default");
+        assert_eq!(namespaced_key.key(), "utils");
+    }
+
+    #[test]
+    fn trying_from_with_namespaced_key_invalid() {
+        let result = NamespacedKey::try_from_with("inv@lid", "default");
+        assert!(result.is_err());
+
+        let result = NamespacedKey::try_from_with("item", "inv@lid-ns");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn trying_from_with_namespaced_namespaced_key() {
+        let namespaced = DummyNamespaced("default".to_string());
+
+        let namespaced_key = NamespacedKey::try_from_with_namespaced("utils", &namespaced).unwrap();
+        assert_eq!(namespaced_key.namespace(), "default");
+        assert_eq!(namespaced_key.key(), "utils");
+
+        let namespaced_key =
+            NamespacedKey::try_from_with_namespaced("embers:utils", &namespaced).unwrap();
+        assert_eq!(namespaced_key.namespace(), "embers");
+        assert_eq!(namespaced_key.key(), "utils");
+    }
+
+    #[test]
+    fn namespaced_key_displaying_and_stringifying() {
+        let key = NamespacedKey::new("embers", "utils");
+        assert_eq!(format!("{}", key), "embers:utils");
+        assert_eq!(
+            <NamespacedKey as Into<String>>::into(key.clone()),
+            "embers:utils"
+        );
+    }
+
+    #[test]
+    fn namespaced_key_equality_and_hashing() {
+        let namespaced_key1 = NamespacedKey::new("embers", "utils");
+        let namespaced_key2 = NamespacedKey::new("embers", "utils");
+        let namespaced_key3 = NamespacedKey::new("embers", "util");
+        let namespaced_key4 = NamespacedKey::try_from("embers:utils").unwrap();
+
+        assert_eq!(namespaced_key1, namespaced_key2);
+        assert_eq!(namespaced_key1, namespaced_key4);
+        assert_ne!(namespaced_key1, namespaced_key3);
+
+        let mut set = HashSet::new();
+        set.insert(namespaced_key1.clone());
+        set.insert(namespaced_key2.clone());
+        assert_eq!(set.len(), 1);
+        set.insert(namespaced_key3);
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn keyed_tuples() {
+        let namespaced_key = NamespacedKey::new("embers", "utils");
+        assert_eq!((namespaced_key.clone(), 42).key(), &namespaced_key);
+    }
+
+    #[test]
+    fn const_hash_map_and_set() {
+        let _map: ConstHashMap<String, i32> = const { const_hash_map() };
+        let _set: ConstHashSet<String> = const { const_hash_set() };
+
+        let mut map = const { const_hash_map() };
+        map.insert("key".to_string(), 42);
+        assert_eq!(map.get("key"), Some(&42));
+
+        let mut set = const { const_hash_set() };
+        set.insert("value".to_string());
+        assert!(set.contains("value"));
     }
 }
