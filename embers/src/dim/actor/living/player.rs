@@ -4,10 +4,10 @@ use crate::dim::actor::living::attributes::embers;
 use crate::dim::item::inventory::{
     Inventory, InventorySlot, ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt,
 };
-use crate::dim::item::{HandActionWield, ItemAction, ItemActionTrigger, ItemActionWield};
+use crate::dim::item::{HandActionWield, ItemActionTrigger, ItemActionWield, SlotItemActions};
 use crate::dim::item::{ItemActionSlot, ItemActions};
 use crate::input::{DoubleClicks, InputButton, just_pressed, pressed};
-use crate::ui::dim::{HotbarSelectionUpdated, PlayerCamera};
+use crate::ui::dim::PlayerCamera;
 use crate::utils::NamespacedKey;
 use avian3d::prelude::*;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
@@ -17,7 +17,6 @@ use bevy::window::PrimaryWindow;
 use bevy_tnua::builtins::TnuaBuiltinDash;
 use bevy_tnua::prelude::*;
 use std::collections::HashMap;
-use std::iter::repeat;
 use std::marker::PhantomData;
 use std::ops::Range;
 use std::sync::{LazyLock, RwLock};
@@ -74,125 +73,136 @@ fn process_input_item_actions(
         With<Player>,
     >,
     mut item_actions: Query<&mut ItemActions>,
+    hotbar_selection_updated_reader: MessageReader<HotbarSelectionUpdated>,
+    off_hand_swapped_reader: MessageReader<OffHandSwapped>,
     time: Res<Time>,
 ) {
     let (inventory, selected_hotbar_slot, ref mut action_status, transform) = *player;
-    let active_item_trigger = |control: &RwLock<InputButton>,
-                               double_clicks: &DoubleClicks,
-                               keys: &ButtonInput<KeyCode>,
-                               mouse: &ButtonInput<MouseButton>|
-     -> Option<ItemActionTrigger> {
-        if double_clicks.double_clicked(*control.read().unwrap()) {
-            Some(ItemActionTrigger::DoubleClick)
-        } else if pressed(control, keys, mouse) {
-            Some(ItemActionTrigger::Click)
-        } else {
-            None
-        }
-    };
-    let update_slot_action = |action_status: &mut PlayerActionStatus,
-                              slot: EquipmentSlot,
-                              trigger: Option<ItemActionTrigger>,
-                              item_action: Option<&mut ItemAction>| {
-        let status = action_status.0.get_mut(&slot).unwrap();
-        match trigger {
-            Some(trigger) => {
-                if status.is_idle() {
-                    let can_activate = match slot {
-                        EquipmentSlot::MainHand | EquipmentSlot::OffHand => item_action
-                            .as_ref()
-                            .map(|action| action.trigger == trigger)
-                            .unwrap_or(true),
-                        EquipmentSlot::Armor => true,
-                    };
-                    if can_activate {
-                        if let Some(action) = item_action {
-                            *status = SlotActionStatus::activate(trigger);
-                            println!("flag1");
+    let mut update_slot_action =
+        |equipment_slot: EquipmentSlot, control: &RwLock<InputButton>, slot: Option<Entity>| {
+            let mut trigger = if double_clicks.double_clicked(*control.read().unwrap()) {
+                Some(ItemActionTrigger::DoubleClick)
+            } else if pressed(control, &keys, &mouse) {
+                Some(ItemActionTrigger::Click)
+            } else {
+                None
+            };
+            if matches!(equipment_slot, EquipmentSlot::OffHand)
+                && match *action_status.get(EquipmentSlot::MainHand) {
+                    SlotActionStatus::Idle => false,
+                    SlotActionStatus::Active {
+                        trigger: current_main_hand_trigger,
+                        ..
+                    } => inventory
+                        .main_hand()
+                        .and_then(|entity| item_actions.get(entity).ok())
+                        .and_then(|actions| {
+                            actions
+                                .get(ItemActionSlot::Hands)
+                                .get(current_main_hand_trigger)
+                        })
+                        .map(|action| match action.wield {
+                            ItemActionWield::Armor => unreachable!(),
+                            ItemActionWield::Hands(HandActionWield::Single) => slot
+                                .and_then(|entity| item_actions.get(entity).ok())
+                                .map(|actions| actions.get(equipment_slot.item_action_slot()))
+                                .zip(trigger)
+                                .and_then(|(actions, trigger)| actions.get(trigger))
+                                .map(|action| {
+                                    matches!(
+                                        action.wield,
+                                        ItemActionWield::Hands(HandActionWield::Dual)
+                                    )
+                                })
+                                .unwrap_or(false),
+                            ItemActionWield::Hands(HandActionWield::Dual) => true,
+                        })
+                        .unwrap_or(false),
+                }
+                || !hotbar_selection_updated_reader.is_empty()
+            {
+                trigger.take();
+            }
+            if matches!(
+                equipment_slot,
+                EquipmentSlot::MainHand | EquipmentSlot::OffHand
+            ) && !off_hand_swapped_reader.is_empty()
+            {
+                trigger.take();
+            }
+            let mut binding = SlotItemActions::default();
+            let item_action = slot
+                .and_then(|entity| item_actions.get_mut(entity).ok())
+                .map(|actions| {
+                    actions
+                        .into_inner()
+                        .get_mut(equipment_slot.item_action_slot())
+                })
+                .unwrap_or(&mut binding);
+            let status = action_status.get_mut(equipment_slot);
+            match trigger {
+                Some(active_trigger) => {
+                    if status.is_idle() {
+                        if let Some(action) = item_action.get_mut(active_trigger) {
+                            *status = SlotActionStatus::activate(active_trigger);
                             (action.on_begin)((&spatial_query, transform));
+                        }
+                    } else if let SlotActionStatus::Active {
+                        timer,
+                        trigger: current_trigger,
+                    } = status
+                    {
+                        if let Some(action) = item_action.get_mut(active_trigger) {
+                            let finished = timer.elapsed() >= action.duration;
+                            if finished || active_trigger != *current_trigger {
+                                (action.on_end)(
+                                    (&spatial_query, transform),
+                                    if finished {
+                                        None
+                                    } else {
+                                        Some(timer.elapsed())
+                                    },
+                                );
+                                *status = SlotActionStatus::activate(active_trigger);
+                                (action.on_begin)((&spatial_query, transform));
+                            }
+                        } else if item_action.get(*current_trigger).is_none() {
+                            *status = SlotActionStatus::idle();
                         }
                     }
-                } else if let SlotActionStatus::Active {
-                    timer,
-                    trigger: previous_trigger,
-                    ..
-                } = status
-                {
-                    if let Some(action) = item_action {
-                        let new_trigger = trigger != *previous_trigger;
-                        let finished = timer.elapsed() >= action.duration;
-                        if finished || new_trigger {
-                            println!("flag2 {} {} {:?} {:?}", finished, new_trigger, *previous_trigger, trigger);
-                            (action.on_end)((&spatial_query, transform), if finished { None } else { Some(timer.elapsed()) });
-                            *status = SlotActionStatus::activate(trigger);
-                            (action.on_begin)((&spatial_query, transform));
+                }
+                None => {
+                    if let SlotActionStatus::Active { timer, trigger } = status {
+                        if let Some(action) = item_action.get_mut(*trigger) {
+                            (action.on_end)(
+                                (&spatial_query, transform),
+                                Some(timer.elapsed()).take_if(|used| action.duration >= *used),
+                            );
                         }
-                    } else {
                         *status = SlotActionStatus::idle();
                     }
                 }
             }
-            None => {
-                if let SlotActionStatus::Active { timer, .. } = status {
-                    if let Some(action) = item_action {
-                            println!("flag3");
-                        (action.on_end)(
-                            (&spatial_query, transform),
-                            Some(timer.elapsed()).take_if(|used| *used >= action.duration),
-                        );
-                    }
-                    *status = SlotActionStatus::idle();
-                }
-            }
-        }
-    };
-    let main_hand_action = inventory[PlayerInventory::MAIN_HAND_SLOT]
-        .and_then(|entity| item_actions.get_mut(entity).ok())
-        .and_then(|actions| actions.into_inner().get_mut(ItemActionSlot::Hands));
-    let main_hand_single_wield = matches!(
-        main_hand_action,
-        Some(ItemAction {
-            wield: ItemActionWield::Hands(HandActionWield::Single),
-            ..
-        })
-    );
+        };
     update_slot_action(
-        action_status,
         EquipmentSlot::MainHand,
-        active_item_trigger(&CONTROLS_USE_MAIN_HAND, &double_clicks, &keys, &mouse),
-        main_hand_action,
+        &CONTROLS_USE_MAIN_HAND,
+        inventory.main_hand(),
     );
-    let main_hand_active = action_status.0[&EquipmentSlot::MainHand].is_active();
-    let off_hand_action = inventory[selected_hotbar_slot.0]
-        .and_then(|entity| item_actions.get_mut(entity).ok())
-        .and_then(|actions| actions.into_inner().get_mut(ItemActionSlot::Hands));
     update_slot_action(
-        action_status,
         EquipmentSlot::OffHand,
-        if main_hand_single_wield
-            && matches!(
-                off_hand_action,
-                Some(ItemAction {
-                    wield: ItemActionWield::Hands(HandActionWield::Single),
-                    ..
-                })
-            )
-            && main_hand_active
-        {
-            active_item_trigger(&CONTROLS_USE_OFF_HAND, &double_clicks, &keys, &mouse)
-        } else {
-            None
-        },
-        off_hand_action,
+        &CONTROLS_USE_OFF_HAND,
+        inventory.hotbar(selected_hotbar_slot.0),
     );
-    update_slot_action(
-        action_status,
-        EquipmentSlot::Armor,
-        active_item_trigger(&CONTROLS_USE_ARMOR, &double_clicks, &keys, &mouse),
-        None,
-    );
+    update_slot_action(EquipmentSlot::Armor, &CONTROLS_USE_ARMOR, inventory.armor());
     action_status.tick(time.delta());
 }
+
+#[derive(Message)]
+pub struct HotbarSelectionUpdated;
+
+#[derive(Message)]
+pub struct OffHandSwapped;
 
 pub fn process_input_hotbar(
     mut commands: Commands,
@@ -200,7 +210,8 @@ pub fn process_input_hotbar(
     mouse: Res<ButtonInput<MouseButton>>,
     mouse_scroll: Res<AccumulatedMouseScroll>,
     mut player: Single<(Entity, &PlayerInventory, &mut SelectedHotbarSlot), With<Player>>,
-    mut hotbar_selection_updated_message: MessageWriter<HotbarSelectionUpdated>,
+    mut hotbar_selection_updated_writer: MessageWriter<HotbarSelectionUpdated>,
+    mut off_hand_swapped_writer: MessageWriter<OffHandSwapped>,
 ) {
     let (player, inventory, ref mut selected_hotbar_slot) = *player;
     let prev_hotbar_selection = selected_hotbar_slot.0;
@@ -217,7 +228,7 @@ pub fn process_input_hotbar(
         selected_hotbar_slot.0 = selected_hotbar_slot.0.rem_euclid(HOTBAR_SLOTS);
     }
     if prev_hotbar_selection != selected_hotbar_slot.0 {
-        hotbar_selection_updated_message.write(HotbarSelectionUpdated);
+        hotbar_selection_updated_writer.write(HotbarSelectionUpdated);
     }
     if just_pressed(&CONTROLS_SWAP_OFF_HAND, &keys, &mouse) {
         commands.move_item(
@@ -225,6 +236,7 @@ pub fn process_input_hotbar(
             ItemDestination::inventory_slot(player, selected_hotbar_slot.0, inventory),
             ItemMoveQuantity::All,
         );
+        off_hand_swapped_writer.write(OffHandSwapped);
     }
 }
 
@@ -364,24 +376,49 @@ pub enum EquipmentSlot {
     Armor,
 }
 
+impl EquipmentSlot {
+    fn item_action_slot(&self) -> ItemActionSlot {
+        match self {
+            EquipmentSlot::MainHand | EquipmentSlot::OffHand => ItemActionSlot::Hands,
+            EquipmentSlot::Armor => ItemActionSlot::Armor,
+        }
+    }
+}
+
 #[derive(Component, Debug)]
-pub struct PlayerActionStatus(HashMap<EquipmentSlot, SlotActionStatus>);
+pub struct PlayerActionStatus(
+    /// Main hand
+    SlotActionStatus,
+    /// Off hand
+    SlotActionStatus,
+    /// Armor
+    SlotActionStatus,
+);
 
 impl PlayerActionStatus {
     fn new() -> Self {
         Self(
-            [
-                EquipmentSlot::MainHand,
-                EquipmentSlot::OffHand,
-                EquipmentSlot::Armor,
-            ]
-            .into_iter()
-            .zip(repeat(SlotActionStatus::Idle))
-            .collect(),
+            SlotActionStatus::Idle,
+            SlotActionStatus::Idle,
+            SlotActionStatus::Idle,
         )
     }
+    fn get(&self, slot: EquipmentSlot) -> &SlotActionStatus {
+        match slot {
+            EquipmentSlot::MainHand => &self.0,
+            EquipmentSlot::OffHand => &self.1,
+            EquipmentSlot::Armor => &self.2,
+        }
+    }
+    fn get_mut(&mut self, slot: EquipmentSlot) -> &mut SlotActionStatus {
+        match slot {
+            EquipmentSlot::MainHand => &mut self.0,
+            EquipmentSlot::OffHand => &mut self.1,
+            EquipmentSlot::Armor => &mut self.2,
+        }
+    }
     fn tick(&mut self, delta: Duration) {
-        for action_status in self.0.values_mut() {
+        for action_status in [&mut self.0, &mut self.1, &mut self.2] {
             if let SlotActionStatus::Active { timer, .. } = action_status {
                 timer.tick(delta);
             }
@@ -405,6 +442,8 @@ pub fn player() -> impl Bundle {
 }
 
 pub(in crate::dim) fn plugin(app: &mut App) {
+    app.add_message::<HotbarSelectionUpdated>();
+    app.add_message::<OffHandSwapped>();
     app.add_systems(
         Update,
         (

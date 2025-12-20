@@ -46,14 +46,14 @@ jobs:
           cargo install -f cargo-binutils
           rustup component add llvm-tools-preview
       - name: Lint
-        run: cargo clippy --verbose --workspace --all-targets --all-features
+        run: cargo clippy --verbose --workspace --all-targets --features dev
       - name: Test
-        run: cargo test --no-fail-fast --verbose --workspace --all-targets --all-features
+        run: cargo test --no-fail-fast --verbose --workspace --all-targets --features dev
       - name: Lint [Release]
         run: cargo clippy --verbose --workspace --all-targets --all-features --release
       - name: Build [Release]
         run: cargo build --verbose --release
-      - name: Prepare
+      - name: Extract
         shell: bash
         run: |
           mkdir -p dist

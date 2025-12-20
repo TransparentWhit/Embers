@@ -5,7 +5,6 @@ use crate::utils::{Keyed, NamespacedKey};
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use embers_macros::identify;
-use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::time::Duration;
 
@@ -120,22 +119,73 @@ pub struct ItemAction {
     pub duration: Duration,
 }
 
+#[derive(Default, Eq, PartialEq)]
+pub struct SlotItemActions(
+    /// Click
+    Option<ItemAction>,
+    /// Double click
+    Option<ItemAction>,
+);
+
+impl SlotItemActions {
+    pub fn get(&self, trigger: ItemActionTrigger) -> Option<&ItemAction> {
+        match trigger {
+            ItemActionTrigger::Click => self.0.as_ref(),
+            ItemActionTrigger::DoubleClick => self.1.as_ref(),
+        }
+    }
+    pub fn get_mut(&mut self, trigger: ItemActionTrigger) -> Option<&mut ItemAction> {
+        match trigger {
+            ItemActionTrigger::Click => self.0.as_mut(),
+            ItemActionTrigger::DoubleClick => self.1.as_mut(),
+        }
+    }
+    fn set(&mut self, trigger: ItemActionTrigger, action: ItemAction) {
+        match trigger {
+            ItemActionTrigger::Click => self.0 = Some(action),
+            ItemActionTrigger::DoubleClick => self.1 = Some(action),
+        }
+    }
+    fn clear(&mut self, trigger: ItemActionTrigger) {
+        match trigger {
+            ItemActionTrigger::Click => self.0 = None,
+            ItemActionTrigger::DoubleClick => self.1 = None,
+        }
+    }
+}
+
 #[derive(Component, Eq, PartialEq)]
-pub struct ItemActions(HashMap<ItemActionSlot, ItemAction>);
+pub struct ItemActions(
+    /// Hands
+    SlotItemActions,
+    /// Armor
+    SlotItemActions,
+);
 
 impl ItemActions {
     pub fn new(actions: impl IntoIterator<Item = ItemAction>) -> Self {
-        Self(HashMap::from_iter(
-            actions
-                .into_iter()
-                .map(|action| (action.wield.slot(), action)),
-        ))
+        let mut hands_actions = SlotItemActions::default();
+        let mut armor_actions = SlotItemActions::default();
+        for action in actions.into_iter() {
+            match action.wield.slot() {
+                ItemActionSlot::Hands => &mut hands_actions,
+                ItemActionSlot::Armor => &mut armor_actions,
+            }
+            .set(action.trigger, action);
+        }
+        Self(hands_actions, armor_actions)
     }
-    pub fn get(&self, slot: ItemActionSlot) -> Option<&ItemAction> {
-        self.0.get(&slot)
+    pub fn get(&self, slot: ItemActionSlot) -> &SlotItemActions {
+        match slot {
+            ItemActionSlot::Hands => &self.0,
+            ItemActionSlot::Armor => &self.1,
+        }
     }
-    pub fn get_mut(&mut self, slot: ItemActionSlot) -> Option<&mut ItemAction> {
-        self.0.get_mut(&slot)
+    pub fn get_mut(&mut self, slot: ItemActionSlot) -> &mut SlotItemActions {
+        match slot {
+            ItemActionSlot::Hands => &mut self.0,
+            ItemActionSlot::Armor => &mut self.1,
+        }
     }
 }
 
@@ -153,19 +203,34 @@ pub fn sword() -> impl Bundle {
     (
         ItemStack(embers::SWORD.clone()),
         Enchantments::default(),
-        ItemActions::new([ItemAction {
-            key: NamespacedKey::new_embers("sword_attack_0"),
-            on_begin: Box::new(|_| {
-                println!("started");
-            }),
-            on_end: Box::new(|(spatial_query, transform), duration| {
-                //spatial_query.cast_shape(, transform.translation, transform.rotation, )
-                println!("ended {:?}", duration);
-            }),
-            trigger: ItemActionTrigger::Click,
-            wield: ItemActionWield::Hands(HandActionWield::Single),
-            duration: Duration::from_millis(500),
-        }]),
+        ItemActions::new([
+            ItemAction {
+                key: NamespacedKey::new_embers("sword_attack_0"),
+                on_begin: Box::new(|_| {
+                    println!("started");
+                }),
+                on_end: Box::new(|(spatial_query, transform), duration| {
+                    //spatial_query.cast_shape(, transform.translation, transform.rotation, )
+                    println!("ended {:?}", duration);
+                }),
+                trigger: ItemActionTrigger::Click,
+                wield: ItemActionWield::Hands(HandActionWield::Single),
+                duration: Duration::from_millis(500),
+            },
+            ItemAction {
+                key: NamespacedKey::new_embers("sword_attack_1"),
+                on_begin: Box::new(|_| {
+                    println!("started1");
+                }),
+                on_end: Box::new(|(spatial_query, transform), duration| {
+                    //spatial_query.cast_shape(, transform.translation, transform.rotation, )
+                    println!("ended1 {:?}", duration);
+                }),
+                trigger: ItemActionTrigger::DoubleClick,
+                wield: ItemActionWield::Hands(HandActionWield::Single),
+                duration: Duration::from_millis(500),
+            },
+        ]),
     )
 }
 

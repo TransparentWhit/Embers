@@ -2,7 +2,8 @@ use crate::GameState;
 use crate::dim::actor::item_actor::{ItemActor, item_actor};
 use crate::dim::actor::living::dummy::dummy;
 use crate::dim::actor::living::player::{
-    HOTBAR_SLOTS, Player, PlayerInventory, SelectedHotbarSlot, player, process_input_hotbar,
+    HOTBAR_SLOTS, HotbarSelectionUpdated, Player, PlayerInventory, SelectedHotbarSlot, player,
+    process_input_hotbar,
 };
 use crate::dim::actor::tnt::tnt;
 use crate::dim::item::inventory::{
@@ -49,9 +50,6 @@ struct HotbarSelection;
 
 #[derive(Component)]
 struct MainHandSlot;
-
-#[derive(Message)]
-pub struct HotbarSelectionUpdated;
 
 fn init(
     mut commands: Commands,
@@ -295,14 +293,14 @@ fn update_hotbar(
 fn update_inventory(player_inventory: Single<&PlayerInventory>) {}
 
 fn update_hotbar_selection(
-    mut updated_message: MessageReader<HotbarSelectionUpdated>,
+    hotbar_selection_updated_reader: MessageReader<HotbarSelectionUpdated>,
     mut hotbar_selection_node: Single<
         (&mut ScalableComponent<Node>, &mut Node),
         With<HotbarSelection>,
     >,
     selected_hotbar_slot: Single<&SelectedHotbarSlot>,
 ) {
-    for _ in updated_message.read() {
+    if !hotbar_selection_updated_reader.is_empty() {
         let (scalable, hotbar_selection_node) = hotbar_selection_node.deref_mut();
         let selected_hotbar_slot = selected_hotbar_slot.0 as UIScale;
         **scalable = ScalableComponent::dynamic(move |scale| Node {
@@ -345,6 +343,5 @@ pub(super) fn plugin(app: &mut App) {
     app.add_systems(Update, resize_camera.run_if(on_message::<WindowResized>));
     app.add_systems(Update, update_player_camera);
     app.add_systems(Update, update_hotbar.after(process_input_hotbar));
-    app.add_message::<HotbarSelectionUpdated>();
     app.add_systems(Update, update_hotbar_selection);
 }
