@@ -1,6 +1,6 @@
 use super::actor;
+use crate::pld::GLOBAL_PAYLOADS;
 use crate::utils::NamespacedKey;
-use crate::utils::assets::GLOBAL_ASSETS;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use std::sync::LazyLock;
@@ -27,12 +27,14 @@ pub(in crate::dim::actor) fn fuse(
 ) {
     for (entity, mut animation_player, mut fuse) in query.iter_mut() {
         if fuse.is_added() {
-            commands.entity(entity).insert(GLOBAL_ASSETS.animate_actor(
-                &mut animation_player,
-                &asset_server,
-                &MODEL_KEY,
-                0,
-            ));
+            commands
+                .entity(entity)
+                .insert(GLOBAL_PAYLOADS.animate_actor(
+                    &mut animation_player,
+                    &asset_server,
+                    &MODEL_KEY,
+                    0,
+                ));
         }
         fuse.0.tick(time.delta());
         if fuse.0.is_finished() {
@@ -41,12 +43,12 @@ pub(in crate::dim::actor) fn fuse(
     }
 }
 
-pub fn tnt(asset_server: &AssetServer) -> impl Bundle {
+pub fn primed_tnt(asset_server: &AssetServer) -> impl Bundle {
     (
         actor(),
         Fuse::default(),
         AnimationPlayer::default(),
-        SceneRoot(GLOBAL_ASSETS.actor_scene(asset_server, &MODEL_KEY, 0)),
+        SceneRoot(GLOBAL_PAYLOADS.actor_scene(asset_server, &MODEL_KEY, 0)),
         Collider::cuboid(1.0, 1.0, 1.0),
         RigidBody::Dynamic,
     )

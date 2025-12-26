@@ -1,12 +1,16 @@
-pub mod inventory;
+pub mod inv;
 
-use crate::registry::{DynamicRegistry, Registry, RegistryError};
-use crate::utils::{Keyed, NamespacedKey};
+use crate::dim::actor::living::player::PlayerFacing;
+use crate::dim::actor::primed_tnt::primed_tnt;
+use crate::reg::{DynamicRegistry, Registry, RegistryError, RegistryInitExt};
+use crate::utils::{Keyed, NamespacedKey, UntypedCmp, UntypedPartialCmp};
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use embers_macros::identify;
+use serde::Deserialize;
 use std::marker::PhantomData;
 use std::time::Duration;
+use toml::Value;
 
 pub mod embers {
     macro_rules! item {
@@ -17,6 +21,7 @@ pub mod embers {
     }
     item!(SPEAR, "spear");
     item!(SWORD, "sword");
+    item!(TNT, "tnt");
 }
 
 #[derive(Component, Clone, Debug, Eq, Hash, PartialEq)]
@@ -44,10 +49,10 @@ impl Default for StackCount {
     }
 }
 
-#[derive(Component, Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Component, Clone, Debug, Deserialize, Eq, Hash, PartialEq)]
 pub struct RangedAmmo();
 
-#[derive(Component, Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Component, Clone, Debug, Deserialize, Eq, Hash, PartialEq)]
 pub struct Enchantments();
 
 impl Default for Enchantments {
@@ -56,7 +61,7 @@ impl Default for Enchantments {
     }
 }
 
-#[derive(Component, Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Component, Clone, Debug, Deserialize, Eq, Hash, PartialEq)]
 pub struct MaxStackSize(u8);
 
 impl Default for MaxStackSize {
@@ -106,26 +111,33 @@ pub enum HandActionWield {
     Dual,
 }
 
-pub type ItemActionEnvironment<
-    'action,
-    'commands_world,
-    'commands_state,
-    'spatial_query_world,
-    'spatial_query_state,
-> = (
-    &'action mut Commands<'commands_world, 'commands_state>,
-    &'action SpatialQuery<'spatial_query_world, 'spatial_query_state>,
+pub type ItemActionEnvironment<'action, 'cmd_world, 'cmd_state, 'sq_world, 'sq_state> = (
+    &'action mut Commands<'cmd_world, 'cmd_state>,
+    &'action SpatialQuery<'sq_world, 'sq_state>,
+    &'action AssetServer,
     &'action Transform,
+    &'action PlayerFacing,
 );
 
+#[derive(Clone)]
 #[identify(key)]
 pub struct ItemAction {
     key: NamespacedKey,
-    pub on_begin: fn(&mut ItemActionEnvironment),
-    pub on_end: fn(&mut ItemActionEnvironment, Option<Duration>),
+    pub on_begin: &'static (dyn Fn(&mut ItemActionEnvironment) + Send + Sync),
+    pub on_end: &'static (
+                 dyn Fn(&mut ItemActionEnvironment, Option<Duration>) -> Option<NamespacedKey>
+                     + Send
+                     + Sync
+             ),
     pub trigger: ItemActionTrigger,
     pub wield: ItemActionWield,
     pub duration: Duration,
+}
+
+impl Keyed for ItemAction {
+    fn key(&self) -> &NamespacedKey {
+        &self.key
+    }
 }
 
 #[derive(Default, Eq, PartialEq)]
@@ -198,25 +210,27 @@ impl ItemActions {
     }
 }
 
-#[derive(Component, Debug, PartialEq)]
+#[derive(Component, Debug, Deserialize)]
 pub struct Weight(f32);
 
-/*pub fn melee(shape: &Collider) -> impl Fn(ItemActionEnvironment) {
-    let filter = SpatialQueryFilter::from_mask();
-    move |(spatial_query, transform)| {
-        spatial_query.shape_intersections(shape, transform.translation, transform.rotation, &filter)
+impl PartialEq for Weight {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0 || (self.0.is_nan() && other.0.is_nan())
     }
-}*/
+}
+impl Eq for Weight {}
 
 pub fn sword() -> impl Bundle {
     (
         ItemStack(embers::SWORD.clone()),
         ItemActions::new([ItemAction {
             key: NamespacedKey::new_embers("sword_attack"),
-            on_begin: |_environment| {},
-            on_end: |(_commands, spatial_query, transform), duration| {
+            on_begin: &|_environment| {},
+            on_end: &|(_commands, spatial_query, _asset_server, transform, _player_facing),
+                      duration| {
                 //spatial_query.cast_shape(, transform.translation, transform.rotation, )
                 println!("ended {:?}", duration);
+                None
             },
             trigger: ItemActionTrigger::Click,
             wield: ItemActionWield::Hands(HandActionWield::Single),
@@ -231,12 +245,14 @@ pub fn spear() -> impl Bundle {
         ItemActions::new([
             ItemAction {
                 key: NamespacedKey::new_embers("spear_attack_0"),
-                on_begin: |_environment| {
+                on_begin: &|_environment| {
                     println!("started");
                 },
-                on_end: |(_commands, spatial_query, transform), duration| {
+                on_end: &|(_commands, spatial_query, _asset_server, transform, _player_facing),
+                          duration| {
                     //spatial_query.cast_shape(, transform.translation, transform.rotation, )
                     println!("ended {:?}", duration);
+                    None
                 },
                 trigger: ItemActionTrigger::Click,
                 wield: ItemActionWield::Hands(HandActionWield::Single),
@@ -244,12 +260,14 @@ pub fn spear() -> impl Bundle {
             },
             ItemAction {
                 key: NamespacedKey::new_embers("spear_throw"),
-                on_begin: |_environment| {},
-                on_end: |(commands, _spatial_query, transform), duration| {
+                on_begin: &|_environment| {},
+                on_end: &|(commands, _spatial_query, _asset_server, transform, _player_facing),
+                          duration| {
                     if duration.is_none() {
                         println!("Throwing spear into the console");
                         commands.spawn(());
                     }
+                    None
                 },
                 trigger: ItemActionTrigger::DoubleClick,
                 wield: ItemActionWield::Hands(HandActionWield::Single),
@@ -259,62 +277,180 @@ pub fn spear() -> impl Bundle {
     )
 }
 
-pub trait ItemComponent: Send + Sync {
-    fn can_stack(&self, lhs: EntityRef, rhs: EntityRef) -> bool;
+pub fn tnt() -> impl Bundle {
+    (
+        ItemStack(embers::TNT.clone()),
+        ItemActions::new([ItemAction {
+            key: NamespacedKey::new_embers("tnt_throw"),
+            on_begin: &|_environment| {},
+            on_end: &|(commands, _spatial_query, asset_server, transform, player_facing),
+                      _duration| {
+                commands.spawn((
+                    primed_tnt(asset_server),
+                    **transform,
+                    LinearVelocity(player_facing.0.as_vec3() * 3.),
+                ));
+                None
+            },
+            trigger: ItemActionTrigger::Click,
+            wield: ItemActionWield::Hands(HandActionWield::Single),
+            duration: Duration::from_millis(250),
+        }]),
+    )
+}
+
+pub trait ItemComponent: Keyed + for<'world> UntypedCmp<EntityRef<'world>> + Send + Sync {
+    fn reset_registry(&self, world: &mut World);
+    fn register_prototype(&self, world: &mut World, item: NamespacedKey, value: Value);
 }
 
 impl DynamicRegistry<dyn ItemComponent> {
-    pub fn register_default<C: Component + PartialEq>(
+    pub fn register_default<C: Component + for<'de> Deserialize<'de> + Eq>(
         &mut self,
         key: NamespacedKey,
     ) -> Result<(), RegistryError> {
-        struct DefaultItemComponent<C: Component + PartialEq>(PhantomData<C>);
-        impl<C: Component + PartialEq> ItemComponent for DefaultItemComponent<C> {
-            fn can_stack(&self, lhs: EntityRef, rhs: EntityRef) -> bool {
+        struct DefaultItemComponent<C: Component + for<'de> Deserialize<'de> + Eq>(
+            NamespacedKey,
+            PhantomData<C>,
+        );
+        impl<C: Component + for<'de> Deserialize<'de> + Eq> Keyed for DefaultItemComponent<C> {
+            fn key(&self) -> &NamespacedKey {
+                &self.0
+            }
+        }
+        impl<C: Component + for<'de> Deserialize<'de> + Eq>
+            UntypedPartialCmp<EntityRef<'_>, EntityRef<'_>> for DefaultItemComponent<C>
+        {
+            fn eq(&self, lhs: EntityRef<'_>, rhs: EntityRef<'_>) -> bool {
                 match (lhs.get::<C>(), rhs.get::<C>()) {
-                    (Some(lhs), Some(rhs)) => lhs == rhs,
+                    (Some(lhs), Some(rhs)) => *lhs == *rhs,
                     (None, None) => true,
                     _ => false,
                 }
             }
         }
-        self.register(key, &DefaultItemComponent(PhantomData::<C>))
+        impl<C: Component + for<'de> Deserialize<'de> + Eq> UntypedCmp<EntityRef<'_>>
+            for DefaultItemComponent<C>
+        {
+        }
+        impl<C: Component + for<'de> Deserialize<'de> + Eq> ItemComponent for DefaultItemComponent<C> {
+            fn reset_registry(&self, world: &mut World) {
+                world.insert_resource(Registry::<C>::new());
+            }
+            fn register_prototype(&self, world: &mut World, item: NamespacedKey, value: Value) {
+                world
+                    .resource_mut::<Registry<C>>()
+                    .register(item, C::deserialize(value).unwrap())
+                    .expect("Failed to register item component prototype value");
+            }
+        }
+        self.register_boxed_keyed(Box::new(DefaultItemComponent(key, PhantomData::<C>)))
     }
 }
 
 pub(super) fn plugin(app: &mut App) {
-    app.init_resource::<DynamicRegistry<dyn ItemComponent>>();
-    app.add_systems(
-        Startup,
-        |mut item_component_registry: ResMut<DynamicRegistry<dyn ItemComponent>>| {
-            struct StackSizeItemComponent;
-            impl ItemComponent for StackSizeItemComponent {
-                fn can_stack(&self, _lhs: EntityRef, _rhs: EntityRef) -> bool {
-                    true
-                }
-            }
-            item_component_registry
-                .register(
-                    NamespacedKey::new_embers("stack_size"),
-                    &StackSizeItemComponent,
-                )
-                .expect("Could not register `stack_size` to item components");
-            item_component_registry
-                .register_default::<RangedAmmo>(NamespacedKey::new_embers("ranged_ammo"))
-                .expect("Could not register `ranged_ammo` to item components");
-            item_component_registry
-                .register_default::<Enchantments>(NamespacedKey::new_embers("enchantments"))
-                .expect("Could not register `enchantments` to item components");
-            item_component_registry
-                .register_default::<MaxStackSize>(NamespacedKey::new_embers("max_stack_size"))
-                .expect("Could not register `max_stack_size` to item components");
-            item_component_registry
-                .register_default::<ItemActions>(NamespacedKey::new_embers("actions"))
-                .expect("Could not register `actions` to item components");
-            item_component_registry
-                .register_default::<Weight>(NamespacedKey::new_embers("weight"))
-                .expect("Could not register `weight` to item components");
-        },
-    );
-    app.init_resource::<Registry<ItemAction>>();
+    app.init_registry::<Enchantments>()
+        .init_registry::<ItemAction>()
+        .init_registry::<MaxStackSize>()
+        .init_registry::<RangedAmmo>()
+        .init_registry::<Weight>()
+        .init_dynamic_registry::<dyn ItemComponent>()
+        .add_systems(
+            PreStartup,
+            (
+                |mut item_components: ResMut<DynamicRegistry<dyn ItemComponent>>| {
+                    (|| {
+                        item_components.register_default::<RangedAmmo>(
+                            NamespacedKey::new_embers("ranged_ammo"),
+                        )?;
+                        item_components.register_default::<Enchantments>(
+                            NamespacedKey::new_embers("enchantments"),
+                        )?;
+                        item_components.register_default::<MaxStackSize>(
+                            NamespacedKey::new_embers("max_stack_size"),
+                        )?;
+                        /*item_components
+                        .register_default::<ItemActions>(NamespacedKey::new_embers("actions"))?;*/
+                        item_components
+                            .register_default::<Weight>(NamespacedKey::new_embers("weight"))?;
+                        Ok::<(), RegistryError>(())
+                    })()
+                    .expect("Failed to register item components")
+                },
+                /*|mut enchantments: ResMut<Registry<Enchantments>>,
+                 mut max_stack_size: ResMut<Registry<MaxStackSize>>,
+                 mut item_actions: ResMut<Registry<ItemAction>>,
+                 mut weights: ResMut<Registry<Weight>>| {
+                    fn melee(
+                        key: NamespacedKey,
+                        next: NamespacedKey,
+                        wield: HandActionWield,
+                        duration: Duration,
+                    ) -> ItemAction {
+                        let next = next;
+                        ItemAction {
+                            key,
+                            on_begin: &|_environment| {},
+                            on_end: &move |(
+                                commands,
+                                spatial_query,
+                                _asset_server,
+                                transform,
+                                player_facing,
+                            ),
+                                           duration| {
+                                if duration.is_none() {
+                                    Some((&next).clone())
+                                } else {
+                                    None
+                                }
+                            },
+                            trigger: ItemActionTrigger::Click,
+                            wield: ItemActionWield::Hands(wield),
+                            duration,
+                        }
+                    }
+                    item_actions.register_keyed(ItemAction {
+                        key: NamespacedKey::new_embers("sword_attack"),
+                        on_begin: &|_environment| {},
+                        on_end: &|(
+                            _commands,
+                            spatial_query,
+                            _asset_server,
+                            transform,
+                            _player_facing,
+                        ),
+                                  duration| {
+                            //spatial_query.cast_shape(, transform.translation, transform.rotation, )
+                            println!("ended {:?}", duration);
+                            None
+                        },
+                        trigger: ItemActionTrigger::Click,
+                        wield: ItemActionWield::Hands(HandActionWield::Single),
+                        duration: Duration::from_millis(500),
+                    });
+                    item_actions.register_keyed(ItemAction {
+                        key: NamespacedKey::new_embers("spear_attack_0"),
+                        on_begin: &|_environment| {
+                            println!("started");
+                        },
+                        on_end: &|(
+                            _commands,
+                            spatial_query,
+                            _asset_server,
+                            transform,
+                            _player_facing,
+                        ),
+                                  duration| {
+                            //spatial_query.cast_shape(, transform.translation, transform.rotation, )
+                            println!("ended {:?}", duration);
+                            None
+                        },
+                        trigger: ItemActionTrigger::Click,
+                        wield: ItemActionWield::Hands(HandActionWield::Single),
+                        duration: Duration::from_millis(500),
+                    });
+                },*/
+            ),
+        );
 }

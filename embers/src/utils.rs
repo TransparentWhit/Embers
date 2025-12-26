@@ -1,18 +1,29 @@
-pub mod assets;
-
 use bevy::asset::uuid::Uuid;
 use bevy::prelude::*;
 use regex::Regex;
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::{BuildHasherDefault, DefaultHasher};
+use std::path::{Component, Path};
 use std::result::Result;
+use std::str::FromStr;
 use std::sync::LazyLock;
 use thiserror::Error;
 
 pub trait Marker: Clone + Send + Sync + 'static {}
 
 impl<T: Clone + Send + Sync + 'static> Marker for T {}
+
+pub trait UntypedPartialCmp<Lhs, Rhs = Lhs> {
+    fn eq(&self, lhs: Lhs, rhs: Rhs) -> bool;
+    #[inline]
+    fn ne(&self, lhs: Lhs, rhs: Rhs) -> bool {
+        !self.eq(lhs, rhs)
+    }
+}
+
+pub trait UntypedCmp<T>: UntypedPartialCmp<T, T> {}
 
 pub type ConstHashMap<K, V> = HashMap<K, V, BuildHasherDefault<DefaultHasher>>;
 
@@ -58,10 +69,19 @@ pub enum IllegalNamespacedKeyError {
     IllegalNamespacedKey(String),
 }
 
-#[derive(Component, Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Component, Serialize, Clone, Debug, Eq, Hash, PartialEq)]
+#[serde(into = "String")]
 pub struct NamespacedKey {
     namespaced_key: String,
     separator_index: usize,
+}
+
+impl<'de> Deserialize<'de> for NamespacedKey {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 pub static NAMESPACE_PATTERN: LazyLock<Regex> =
@@ -80,6 +100,7 @@ impl NamespacedKey {
     pub const SEPARATOR: &'static str = ":";
     const SEPARATOR_LEN: usize = Self::SEPARATOR.len();
     pub(crate) const EMBERS_NAMESPACE: &'static str = "embers";
+    #[inline]
     fn new_internal(namespace: &str, key: &str) -> Self {
         Self {
             namespaced_key: format!(
@@ -124,10 +145,22 @@ impl NamespacedKey {
         Self::new(Self::EMBERS_NAMESPACE, key)
     }
     /// Attempts to create a new [NamespacedKey] from the given `value`.
+    pub fn try_from<'val, 'default_namespace>(
+        value: impl Into<&'val str>,
+    ) -> Result<Self, IllegalNamespacedKeyError> {
+        let value = value.into();
+        match NAMESPACED_KEY_PATTERN.captures(value) {
+            Some(captures) => Ok(Self::new_internal(&captures["namespace"], &captures["key"])),
+            None => Err(IllegalNamespacedKeyError::IllegalNamespacedKey(
+                value.to_string(),
+            )),
+        }
+    }
+    /// Attempts to create a new [NamespacedKey] from the given `value`.
     ///
     /// If `value` does not contain a namespace, `default_namespace` is used.
-    pub fn try_from_with<'value, 'default_namespace>(
-        value: impl Into<&'value str>,
+    pub fn try_from_with<'val, 'default_namespace>(
+        value: impl Into<&'val str>,
         default_namespace: impl Into<&'default_namespace str>,
     ) -> Result<Self, IllegalNamespacedKeyError> {
         let value = value.into();
@@ -150,15 +183,15 @@ impl NamespacedKey {
     ///
     /// If `value` does not contain a namespace, the namespace of `default_namespace` is used.
     #[inline]
-    pub fn try_from_with_namespaced<'value>(
-        value: impl Into<&'value str>,
+    pub fn try_from_with_namespaced<'val>(
+        value: impl Into<&'val str>,
         default_namespace: &impl Namespaced,
     ) -> Result<Self, IllegalNamespacedKeyError> {
         Self::try_from_with(value, default_namespace.namespace())
     }
     #[inline]
-    pub(crate) fn try_from_with_embers<'value>(
-        value: impl Into<&'value str>,
+    pub(crate) fn try_from_with_embers<'val>(
+        value: impl Into<&'val str>,
     ) -> Result<Self, IllegalNamespacedKeyError> {
         Self::try_from_with(value, Self::EMBERS_NAMESPACE)
     }
@@ -185,16 +218,47 @@ impl From<NamespacedKey> for String {
     }
 }
 
-impl TryFrom<&str> for NamespacedKey {
-    type Error = IllegalNamespacedKeyError;
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match NAMESPACED_KEY_PATTERN.captures(value) {
-            Some(captures) => Ok(Self::new_internal(&captures["namespace"], &captures["key"])),
-            None => Err(IllegalNamespacedKeyError::IllegalNamespacedKey(
-                value.to_string(),
-            )),
+impl FromStr for NamespacedKey {
+    type Err = IllegalNamespacedKeyError;
+    #[inline]
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        NamespacedKey::try_from_with_embers(s)
+    }
+}
+
+pub fn path_to_unix_components<P: AsRef<Path>>(path: P) -> String {
+    let mut result = String::new();
+    for component in path.as_ref().components() {
+        match component {
+            Component::Prefix(prefix) => {
+                result.push_str(&prefix.as_os_str().to_string_lossy());
+            }
+            Component::RootDir => {
+                if !result.ends_with('/') {
+                    result.push('/');
+                }
+            }
+            Component::CurDir => {
+                if !result.is_empty() && !result.ends_with('/') {
+                    result.push('/');
+                }
+                result.push('.');
+            }
+            Component::ParentDir => {
+                if !result.is_empty() && !result.ends_with('/') {
+                    result.push('/');
+                }
+                result.push_str("..");
+            }
+            Component::Normal(normal) => {
+                if !result.is_empty() && !result.ends_with('/') {
+                    result.push('/');
+                }
+                result.push_str(&normal.to_string_lossy());
+            }
         }
     }
+    result
 }
 
 #[cfg(test)]

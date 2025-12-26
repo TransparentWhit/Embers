@@ -1,6 +1,7 @@
 pub mod dim;
 pub mod input;
-pub mod registry;
+pub mod pld;
+pub mod reg;
 mod ui;
 pub mod utils;
 
@@ -34,7 +35,7 @@ fn main() {
         .add_plugins(
             DefaultPlugins
                 .set(AssetPlugin {
-                    file_path: ["..", "res", "assets"].join(MAIN_SEPARATOR_STR),
+                    file_path: ["..", "pld"].join(MAIN_SEPARATOR_STR),
                     ..default()
                 })
                 .set(ImagePlugin {
@@ -45,9 +46,9 @@ fn main() {
         .add_plugins(TnuaControllerPlugin::new(PhysicsSchedule))
         .add_plugins(TnuaAvian3dPlugin::new(PhysicsSchedule))
         .add_plugins(dim::plugin)
-        .add_plugins(input::input_plugin)
+        .add_plugins(input::plugin)
+        .add_plugins(pld::plugin)
         .add_plugins(ui::plugin)
-        .add_plugins(utils::assets::assets_plugin)
         .add_systems(
             Startup,
             |asset_images: Res<Assets<Image>>,

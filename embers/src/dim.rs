@@ -2,7 +2,7 @@ pub mod actor;
 pub mod item;
 
 use crate::dim::actor::living::player;
-use crate::utils::assets::AssetScope;
+use crate::pld::PayloadScope;
 use crate::utils::{Keyed, Namespaced, NamespacedKey};
 use avian3d::prelude::PhysicsLayer;
 use avian3d::prelude::*;
@@ -69,21 +69,23 @@ impl Default for Time {
 
 pub struct Dimension {
     key: NamespacedKey,
-    assets: AssetScope,
+    assets: PayloadScope<'static>,
 }
+
 impl Keyed for Dimension {
     fn key(&self) -> &NamespacedKey {
         &self.key
     }
 }
+
 impl Dimension {
     pub fn new(key: NamespacedKey) -> Self {
         Self {
-            assets: AssetScope::new(format!("dim/{}/{}", key.namespace(), key.key())),
+            assets: PayloadScope::new(format!("dim/{}/{}", key.namespace(), key.key())),
             key,
         }
     }
-    pub fn assets(&self) -> &AssetScope {
+    pub fn assets(&self) -> &PayloadScope<'_> {
         &self.assets
     }
 }

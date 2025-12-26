@@ -1,5 +1,5 @@
 use crate::GameState;
-use crate::utils::assets::AssetLoadedMessage;
+use crate::pld::PayloadLoadedMessage;
 use bevy::app::App;
 use bevy::color::palettes::css::YELLOW;
 use bevy::prelude::*;
@@ -10,6 +10,7 @@ pub enum Loading {
     MainMenu,
     World,
 }
+
 impl Loading {
     fn game_state(&self) -> GameState {
         match self {
@@ -48,8 +49,8 @@ fn init(mut commands: Commands) {
     ));
 }
 
-fn asset_loaded_listener(
-    mut messages: MessageReader<AssetLoadedMessage>,
+fn payload_loaded_listener(
+    mut messages: MessageReader<PayloadLoadedMessage>,
     loading: Res<State<Loading>>,
     mut game_state: ResMut<NextState<GameState>>,
 ) {
@@ -63,6 +64,6 @@ fn fina() {}
 pub(super) fn plugin(app: &mut App) {
     app.init_state::<Loading>()
         .add_systems(OnEnter(GameState::Loading), init)
-        .add_systems(Update, asset_loaded_listener)
+        .add_systems(Update, payload_loaded_listener)
         .add_systems(OnExit(GameState::Loading), fina);
 }

@@ -1,8 +1,8 @@
 use crate::GameState;
 use crate::dim::LOBBY;
+use crate::pld::PayloadLoadRequest;
 use crate::ui::loading_screen::Loading;
 use crate::ui::*;
-use crate::utils::assets::AssetLoadRequest;
 use bevy::color::palettes::basic::YELLOW;
 use bevy::prelude::*;
 use bevy::sprite::Text2dShadow;
@@ -60,7 +60,7 @@ fn menu_action(
     mut menu_state: ResMut<NextState<MainMenuState>>,
     mut game_state: ResMut<NextState<GameState>>,
     mut loading: ResMut<NextState<Loading>>,
-    mut asset_load_requests: MessageWriter<AssetLoadRequest>,
+    mut payload_load_requests: MessageWriter<PayloadLoadRequest>,
 ) {
     for (interaction, menu_button_action) in &interaction_query {
         if *interaction == Interaction::Pressed {
@@ -68,7 +68,7 @@ fn menu_action(
                 MainMenuButton::Play => {
                     loading.set(Loading::World);
                     game_state.set(GameState::Loading);
-                    asset_load_requests.write(AssetLoadRequest::Scope(LOBBY.assets()));
+                    payload_load_requests.write(PayloadLoadRequest::Scope(LOBBY.assets()));
                     menu_state.set(MainMenuState::Main);
                 }
                 MainMenuButton::Options => menu_state.set(MainMenuState::Options),

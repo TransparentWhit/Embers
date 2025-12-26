@@ -73,7 +73,7 @@ fn rescale_components<C: Component<Mutability = Mutable>>(
     mut scalables: Query<(&ScalableComponent<C>, &mut C)>,
     mut rescale_messages: MessageReader<RescaleUI>,
 ) {
-    for _ in rescale_messages.read() {
+    for _message in rescale_messages.read() {
         for (scalable, mut component) in scalables.iter_mut() {
             scalable.apply(&mut component);
         }

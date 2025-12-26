@@ -169,7 +169,7 @@ fn track_double_clicks(
     }
 }
 
-pub(super) fn input_plugin(app: &mut App) {
+pub(super) fn plugin(app: &mut App) {
     app.insert_resource(DoubleClicks::default()).add_systems(
         PreUpdate,
         track_double_clicks

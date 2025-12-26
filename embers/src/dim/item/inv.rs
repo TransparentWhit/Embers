@@ -1,6 +1,6 @@
 use crate::dim::actor::item_actor::ItemActor;
 use crate::dim::item::{ItemComponent, ItemStack, MaxStackSize, StackCount};
-use crate::registry::DynamicRegistry;
+use crate::reg::DynamicRegistry;
 use crate::utils::Marker;
 use bevy::prelude::*;
 use std::any::type_name;
@@ -99,10 +99,10 @@ fn try_stack(
     {
         return ItemStackResult::NotStackable;
     }
-    if !world
+    if world
         .resource::<DynamicRegistry<dyn ItemComponent>>()
         .iter()
-        .all(|item_component| item_component.can_stack(source_ref, target_ref))
+        .any(|item_component| item_component.ne(source_ref, target_ref))
     {
         return ItemStackResult::NotStackable;
     }
@@ -291,7 +291,7 @@ enum SingleItemSource<const N: usize, M: Marker> {
 }
 
 impl<const N: usize, M: Marker> SingleItemSource<N, M> {
-    fn set_item(&mut self, world: &mut World, item: Entity) {
+    fn set_item(&self, world: &mut World, item: Entity) {
         match *self {
             Self::InventorySlot(inventory, slot, _) => {
                 world.get_mut::<Inventory<N, M>>(inventory).unwrap()[slot] = Some(item)
@@ -300,7 +300,7 @@ impl<const N: usize, M: Marker> SingleItemSource<N, M> {
         };
     }
     /// Call this AFTER the relationship between the owner and the item has been removed
-    fn drop_slot(&mut self, world: &mut World) {
+    fn drop_slot(&self, world: &mut World) {
         match *self {
             Self::InventorySlot(inventory, slot, _) => {
                 world.get_mut::<Inventory<N, M>>(inventory).unwrap()[slot] = None
@@ -316,7 +316,7 @@ enum SingleItemDestination<const N: usize, M: Marker> {
 }
 
 impl<const N: usize, M: Marker> SingleItemDestination<N, M> {
-    fn set_item(&mut self, world: &mut World, item: Entity) {
+    fn set_item(&self, world: &mut World, item: Entity) {
         match *self {
             Self::InventorySlot(inventory, slot, _) => {
                 world.get_mut::<Inventory<N, M>>(inventory).unwrap()[slot] = Some(item)
@@ -325,7 +325,7 @@ impl<const N: usize, M: Marker> SingleItemDestination<N, M> {
         };
     }
     /// Call this AFTER the relationship between the owner and the item has been removed
-    fn drop_slot(&mut self, world: &mut World) {
+    fn drop_slot(&self, world: &mut World) {
         match *self {
             Self::InventorySlot(inventory, slot, _) => {
                 world.get_mut::<Inventory<N, M>>(inventory).unwrap()[slot] = None
@@ -335,42 +335,27 @@ impl<const N: usize, M: Marker> SingleItemDestination<N, M> {
     }
 }
 
-pub struct MoveItemCommand<
-    const SOURCE_N: usize,
-    SourceM: Marker,
-    const DESTINATION_N: usize,
-    DestinationM: Marker,
-> {
-    source: ItemSource<SOURCE_N, SourceM>,
-    destination: ItemDestination<DESTINATION_N, DestinationM>,
+pub struct MoveItemCommand<const SRC_N: usize, SrcM: Marker, const DST_N: usize, DstM: Marker> {
+    source: ItemSource<SRC_N, SrcM>,
+    destination: ItemDestination<DST_N, DstM>,
     quantity: ItemMoveQuantity,
 }
 
 pub trait MoveItemCommandExt {
-    fn move_item<
-        const SOURCE_N: usize,
-        SourceM: Marker,
-        const DESTINATION_N: usize,
-        DestinationM: Marker,
-    >(
+    fn move_item<const SRC_N: usize, SrcM: Marker, const DST_N: usize, DstM: Marker>(
         &mut self,
-        source: ItemSource<SOURCE_N, SourceM>,
-        destination: ItemDestination<DESTINATION_N, DestinationM>,
+        source: ItemSource<SRC_N, SrcM>,
+        destination: ItemDestination<DST_N, DstM>,
         quantity: ItemMoveQuantity,
     );
 }
 
 impl<'world, 'state> MoveItemCommandExt for Commands<'world, 'state> {
     #[inline]
-    fn move_item<
-        const SOURCE_N: usize,
-        SourceM: Marker,
-        const DESTINATION_N: usize,
-        DestinationM: Marker,
-    >(
+    fn move_item<const SRC_N: usize, SrcM: Marker, const DST_N: usize, DstM: Marker>(
         &mut self,
-        source: ItemSource<SOURCE_N, SourceM>,
-        destination: ItemDestination<DESTINATION_N, DestinationM>,
+        source: ItemSource<SRC_N, SrcM>,
+        destination: ItemDestination<DST_N, DstM>,
         quantity: ItemMoveQuantity,
     ) {
         self.queue(MoveItemCommand {
@@ -381,8 +366,8 @@ impl<'world, 'state> MoveItemCommandExt for Commands<'world, 'state> {
     }
 }
 
-impl<const SOURCE_N: usize, SourceM: Marker, const DESTINATION_N: usize, DestinationM: Marker>
-    Command for MoveItemCommand<SOURCE_N, SourceM, DESTINATION_N, DestinationM>
+impl<const SRC_N: usize, SrcM: Marker, const DST_N: usize, DstM: Marker> Command
+    for MoveItemCommand<SRC_N, SrcM, DST_N, DstM>
 {
     fn apply(self, world: &mut World) {
         if let Err(err) = self.source.verify_existence(world) {
@@ -393,71 +378,66 @@ impl<const SOURCE_N: usize, SourceM: Marker, const DESTINATION_N: usize, Destina
             warn!("Could not move item to entity: {}", err);
             return;
         }
-        let mut move_single =
-            |source: &mut SingleItemSource<SOURCE_N, SourceM>,
-             destination: &mut SingleItemDestination<DESTINATION_N, DestinationM>,
-             swap_if_not_stackable: bool|
-             -> bool {
-                let (src_owner, src_slot) = match *source {
-                    SingleItemSource::InventorySlot(inventory, slot, _) => (
-                        inventory,
-                        world
-                            .get::<Inventory<SOURCE_N, SourceM>>(inventory)
-                            .unwrap()[slot],
-                    ),
-                    SingleItemSource::ItemActor(item_actor) => (
-                        item_actor,
-                        Some(world.get::<ItemActor>(item_actor).unwrap().0),
-                    ),
-                };
-                let (dst_owner, dst_slot) = match *destination {
-                    SingleItemDestination::InventorySlot(inventory, slot, _) => (
-                        inventory,
-                        world
-                            .get::<Inventory<DESTINATION_N, DestinationM>>(inventory)
-                            .unwrap()[slot],
-                    ),
-                    SingleItemDestination::ItemActor(item_actor) => (
-                        item_actor,
-                        Some(world.get::<ItemActor>(item_actor).unwrap().0),
-                    ),
-                };
-                match (src_slot, dst_slot) {
-                    (Some(src_item), Some(dst_item)) => {
-                        match try_stack(world, src_item, dst_item, self.quantity) {
-                            ItemStackResult::NotStackable => {
-                                if swap_if_not_stackable {
-                                    world.entity_mut(src_item).insert(ChildOf(dst_owner));
-                                    world.entity_mut(dst_item).insert(ChildOf(src_owner));
-                                    source.set_item(world, dst_item);
-                                    destination.set_item(world, src_item);
-                                }
-                                false
-                            }
-                            ItemStackResult::Remaining => false,
-                            ItemStackResult::Consumed => {
-                                source.drop_slot(world);
-                                true
-                            }
-                        }
-                    }
-                    (Some(src_item), None) => {
-                        world.entity_mut(src_item).insert(ChildOf(dst_owner));
-                        source.drop_slot(world);
-                        destination.set_item(world, src_item);
-                        true
-                    }
-                    (None, Some(dst_item)) => {
-                        if swap_if_not_stackable {
-                            world.entity_mut(dst_item).insert(ChildOf(src_owner));
-                            source.set_item(world, dst_item);
-                            destination.drop_slot(world);
-                        }
-                        true
-                    }
-                    (None, None) => true,
-                }
+        let mut move_single = |source: &SingleItemSource<SRC_N, SrcM>,
+                               destination: &SingleItemDestination<DST_N, DstM>,
+                               swap_if_not_stackable: bool|
+         -> bool {
+            let (src_owner, src_slot) = match *source {
+                SingleItemSource::InventorySlot(inventory, slot, _) => (
+                    inventory,
+                    world.get::<Inventory<SRC_N, SrcM>>(inventory).unwrap()[slot],
+                ),
+                SingleItemSource::ItemActor(item_actor) => (
+                    item_actor,
+                    Some(world.get::<ItemActor>(item_actor).unwrap().0),
+                ),
             };
+            let (dst_owner, dst_slot) = match *destination {
+                SingleItemDestination::InventorySlot(inventory, slot, _) => (
+                    inventory,
+                    world.get::<Inventory<DST_N, DstM>>(inventory).unwrap()[slot],
+                ),
+                SingleItemDestination::ItemActor(item_actor) => (
+                    item_actor,
+                    Some(world.get::<ItemActor>(item_actor).unwrap().0),
+                ),
+            };
+            match (src_slot, dst_slot) {
+                (Some(src_item), Some(dst_item)) => {
+                    match try_stack(world, src_item, dst_item, self.quantity) {
+                        ItemStackResult::NotStackable => {
+                            if swap_if_not_stackable {
+                                world.entity_mut(src_item).insert(ChildOf(dst_owner));
+                                world.entity_mut(dst_item).insert(ChildOf(src_owner));
+                                source.set_item(world, dst_item);
+                                destination.set_item(world, src_item);
+                            }
+                            false
+                        }
+                        ItemStackResult::Remaining => false,
+                        ItemStackResult::Consumed => {
+                            source.drop_slot(world);
+                            true
+                        }
+                    }
+                }
+                (Some(src_item), None) => {
+                    world.entity_mut(src_item).insert(ChildOf(dst_owner));
+                    source.drop_slot(world);
+                    destination.set_item(world, src_item);
+                    true
+                }
+                (None, Some(dst_item)) => {
+                    if swap_if_not_stackable {
+                        world.entity_mut(dst_item).insert(ChildOf(src_owner));
+                        source.set_item(world, dst_item);
+                        destination.drop_slot(world);
+                    }
+                    true
+                }
+                (None, None) => true,
+            }
+        };
         match (&self.source, &self.destination) {
             (ItemSource::InventoryRange(..), ItemDestination::InventoryRange(..)) => {
                 unimplemented!("Can not move from an inventory range to another inventory range")

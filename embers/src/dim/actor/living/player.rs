@@ -1,14 +1,16 @@
-use super::{Attributes, living_actor};
+use super::{AttributeBase, Attributes, living_actor};
 use crate::GameState;
 use crate::dim::actor::living::attributes::embers;
-use crate::dim::item::inventory::{
+use crate::dim::item::inv::{
     Inventory, InventorySlot, ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt,
 };
 use crate::dim::item::{
-    HandActionWield, ItemActionEnvironment, ItemActionTrigger, ItemActionWield, SlotItemActions,
+    HandActionWield, ItemAction, ItemActionEnvironment, ItemActionTrigger, ItemActionWield,
+    SlotItemActions,
 };
 use crate::dim::item::{ItemActionSlot, ItemActions};
 use crate::input::{DoubleClicks, InputButton, just_pressed, pressed};
+use crate::reg::{Registry, RegistryAccess};
 use crate::ui::dim::PlayerCamera;
 use crate::utils::NamespacedKey;
 use avian3d::prelude::*;
@@ -18,7 +20,6 @@ use bevy::time::Stopwatch;
 use bevy::window::PrimaryWindow;
 use bevy_tnua::builtins::TnuaBuiltinDash;
 use bevy_tnua::prelude::*;
-use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::ops::Range;
 use std::sync::{LazyLock, RwLock};
@@ -63,6 +64,7 @@ controls!(CONTROLS_INVENTORY, K@KeyR);
 fn process_input_item_actions(
     mut commands: Commands,
     spatial_query: SpatialQuery,
+    asset_server: Res<AssetServer>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     double_clicks: Res<DoubleClicks>,
@@ -76,12 +78,20 @@ fn process_input_item_actions(
         With<Player>,
     >,
     mut item_actions: Query<&mut ItemActions>,
+    item_action_registry: Res<Registry<ItemAction>>,
+    player_facing: Res<PlayerFacing>,
     hotbar_selection_updated_reader: MessageReader<HotbarSelectionUpdated>,
     off_hand_swapped_reader: MessageReader<OffHandSwapped>,
     time: Res<Time>,
 ) {
     let (inventory, selected_hotbar_slot, ref mut action_status, transform) = *player;
-    let mut environment: ItemActionEnvironment = (&mut commands, &spatial_query, transform);
+    let mut environment: ItemActionEnvironment = (
+        &mut commands,
+        &spatial_query,
+        &asset_server,
+        transform,
+        &player_facing,
+    );
     let mut update_slot_action =
         |equipment_slot: EquipmentSlot, control: &RwLock<InputButton>, slot: Option<Entity>| {
             let mut trigger = if double_clicks.double_clicked(*control.read().unwrap()) {
@@ -147,7 +157,7 @@ fn process_input_item_actions(
             match trigger {
                 Some(active_trigger) => {
                     if status.is_idle() {
-                        if let Some(action) = item_action.get_mut(active_trigger) {
+                        if let Some(action) = item_action.get(active_trigger) {
                             *status = SlotActionStatus::activate(active_trigger);
                             (action.on_begin)(&mut environment);
                         }
@@ -166,7 +176,11 @@ fn process_input_item_actions(
                                     } else {
                                         Some(timer.elapsed())
                                     },
-                                );
+                                )
+                                .and_then(|new_action| item_action_registry.get(&new_action))
+                                .inspect(|&new_action| {
+                                    *action = new_action.clone();
+                                });
                                 *status = SlotActionStatus::activate(active_trigger);
                                 (action.on_begin)(&mut environment);
                             }
@@ -181,7 +195,11 @@ fn process_input_item_actions(
                             (action.on_end)(
                                 &mut environment,
                                 Some(timer.elapsed()).take_if(|used| action.duration >= *used),
-                            );
+                            )
+                            .and_then(|new_action| item_action_registry.get(&new_action))
+                            .inspect(|&new_action| {
+                                *action = new_action.clone();
+                            });
                         }
                         *status = SlotActionStatus::idle();
                     }
@@ -244,12 +262,16 @@ pub fn process_input_hotbar(
     }
 }
 
+#[derive(Resource)]
+pub struct PlayerFacing(pub Dir3);
+
 fn process_input_movement(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut player: Single<(&Attributes, &mut TnuaController), With<Player>>,
     player_camera: Single<(&Camera, &PlayerCamera), With<PlayerCamera>>,
+    mut player_facing: ResMut<PlayerFacing>,
 ) {
     let (attributes, ref mut controller) = *player;
     let forward = if pressed(&CONTROLS_MOVEMENT, &keys, &mouse)
@@ -278,7 +300,8 @@ fn process_input_movement(
         }
     } else {
         None
-    };
+    }
+    .inspect(|direction| player_facing.0 = *direction);
     controller.basis(TnuaBuiltinWalk {
         float_height: FLOAT_HEIGHT,
         desired_velocity: forward
@@ -295,12 +318,8 @@ fn process_input_movement(
     }
 }
 
-static ATTRIBUTES: LazyLock<HashMap<NamespacedKey, f32>> = LazyLock::new(|| {
-    HashMap::from([
-        (embers::MAX_HEALTH.clone(), 20.),
-        (embers::MOVEMENT_SPEED.clone(), 2.),
-    ])
-});
+pub static KEY: LazyLock<NamespacedKey> = LazyLock::new(|| NamespacedKey::new_embers("player"));
+
 const FLOAT_HEIGHT: f32 = 0.85;
 
 #[derive(Component, Debug)]
@@ -430,9 +449,9 @@ impl PlayerActionStatus {
     }
 }
 
-pub fn player() -> impl Bundle {
+pub fn player(attribute_bases: impl RegistryAccess<Item = AttributeBase>) -> impl Bundle {
     (
-        living_actor(&ATTRIBUTES),
+        living_actor(&KEY, attribute_bases),
         Collider::cylinder(0.5, 1.7),
         PlayerInventory::new(),
         SelectedHotbarSlot::default(),
@@ -448,6 +467,7 @@ pub fn player() -> impl Bundle {
 pub(in crate::dim) fn plugin(app: &mut App) {
     app.add_message::<HotbarSelectionUpdated>();
     app.add_message::<OffHandSwapped>();
+    app.insert_resource(PlayerFacing(Dir3::X));
     app.add_systems(
         Update,
         (

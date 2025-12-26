@@ -2,6 +2,8 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, Meta, parse_macro_input};
 
+/// Implements `Eq`, `Hash`, and `PartialEq` for a struct
+/// based on a specific field that serves as its identity.
 #[proc_macro_attribute]
 pub fn identify(attr: TokenStream, item: TokenStream) -> TokenStream {
     let identifier_attr = parse_macro_input!(attr as Meta);

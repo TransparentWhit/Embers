@@ -1,22 +1,65 @@
+//! *Payload*(pld)*s* are resources that the game uses during execution, such as assets or game data.
+
+pub mod meta;
+
 use crate::GameState;
+use crate::pld::meta::ReloadMetadata;
 use crate::utils::{ConstHashSet, Namespaced, NamespacedKey, const_hash_set};
+use anyhow::Error;
 use bevy::app::App;
-use bevy::asset::{AssetPath, LoadedFolder};
+use bevy::asset::io::Reader;
+use bevy::asset::{AssetLoader, AssetPath, LoadContext, LoadedFolder};
 use bevy::prelude::*;
+use serde::Deserialize;
+use std::marker::PhantomData;
 use std::sync::{LazyLock, Mutex};
+use toml::from_slice;
+
+pub struct MetadataLoader<T: Asset + for<'de> Deserialize<'de>>(
+    &'static [&'static str],
+    PhantomData<T>,
+);
+
+impl<T: Asset + for<'de> Deserialize<'de>> MetadataLoader<T> {
+    pub fn new(extensions: &'static [&'static str]) -> Self {
+        Self(extensions, PhantomData)
+    }
+}
+
+impl<T: Asset + for<'de> Deserialize<'de>> AssetLoader for MetadataLoader<T> {
+    type Asset = T;
+    type Settings = ();
+    type Error = Error;
+    async fn load(
+        &self,
+        reader: &mut dyn Reader,
+        _settings: &Self::Settings,
+        _load_context: &mut LoadContext<'_>,
+    ) -> Result<Self::Asset, Self::Error> {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).await?;
+        Ok(from_slice(&bytes)?)
+    }
+    fn extensions(&self) -> &[&str] {
+        self.0
+    }
+}
 
 #[derive(Eq, PartialEq, Hash, Clone)]
-pub struct AssetScope {
-    root: AssetPath<'static>,
-    images_root: AssetPath<'static>,
-    models_root: AssetPath<'static>,
+pub struct PayloadScope<'scope> {
+    root: AssetPath<'scope>,
+    images_root: AssetPath<'scope>,
+    models_root: AssetPath<'scope>,
+    items_root: AssetPath<'scope>,
 }
-impl AssetScope {
-    pub fn new(root: impl Into<AssetPath<'static>>) -> Self {
+
+impl<'scope> PayloadScope<'scope> {
+    pub fn new(root: impl Into<AssetPath<'scope>>) -> Self {
         let root = root.into();
         Self {
             images_root: root.resolve("images").unwrap(),
             models_root: root.resolve("models").unwrap(),
+            items_root: root.resolve("items").unwrap(),
             root,
         }
     }
@@ -120,74 +163,82 @@ impl AssetScope {
     }
 }
 
-pub static GLOBAL_ASSETS: LazyLock<AssetScope> = LazyLock::new(|| AssetScope::new("global"));
+pub static GLOBAL_PAYLOADS: LazyLock<PayloadScope> = LazyLock::new(|| PayloadScope::new("global"));
 
-fn load_global_assets(mut asset_load_requests: MessageWriter<AssetLoadRequest>) {
-    asset_load_requests.write(AssetLoadRequest::Scope(&GLOBAL_ASSETS));
+fn load_global_payloads(mut asset_load_requests: MessageWriter<PayloadLoadRequest>) {
+    asset_load_requests.write(PayloadLoadRequest::Scope(&GLOBAL_PAYLOADS));
 }
 
 #[derive(Message)]
-pub enum AssetLoadRequest {
-    Scope(&'static AssetScope),
+pub enum PayloadLoadRequest {
+    Scope(&'static PayloadScope<'static>),
 }
 
 #[derive(Message)]
-pub struct AssetLoadedMessage {}
+pub struct PayloadLoadedMessage {}
 
 #[derive(Message)]
-pub enum AssetUnloadRequest {
-    Scope(&'static AssetScope),
+pub enum PayloadUnloadRequest {
+    Scope(&'static PayloadScope<'static>),
 }
 
-static LOADED_ASSETS: Mutex<ConstHashSet<UntypedHandle>> = Mutex::new(const_hash_set());
+static LOADED_PAYLOADS: Mutex<ConstHashSet<UntypedHandle>> = Mutex::new(const_hash_set());
 
-fn asset_load_request_listener(
-    mut requests: MessageReader<AssetLoadRequest>,
+fn payload_load_request_listener(
+    mut requests: MessageReader<PayloadLoadRequest>,
     asset_server: Res<AssetServer>,
     mut game_state: ResMut<NextState<GameState>>,
 ) {
     for request in requests.read() {
-        LOADED_ASSETS.lock().unwrap().insert(match request {
-            AssetLoadRequest::Scope(scope) => {
+        LOADED_PAYLOADS.lock().unwrap().insert(match request {
+            PayloadLoadRequest::Scope(scope) => {
                 asset_server.load_folder(scope.root.clone()).untyped()
             }
         });
         game_state.set(GameState::Loading);
     }
 }
-fn asset_unload_request_listener(
-    mut requests: MessageReader<AssetUnloadRequest>,
+
+fn payload_unload_request_listener(
+    mut requests: MessageReader<PayloadUnloadRequest>,
     asset_server: Res<AssetServer>,
 ) {
     for request in requests.read() {
         match request {
-            AssetUnloadRequest::Scope(scope) => asset_server
+            PayloadUnloadRequest::Scope(scope) => asset_server
                 .get_path_id(scope.root.clone())
                 .and_then(|untyped_id| asset_server.get_id_handle_untyped(untyped_id)),
         }
-        .map(|handle| LOADED_ASSETS.lock().unwrap().remove(&handle));
+        .map(|handle| LOADED_PAYLOADS.lock().unwrap().remove(&handle));
     }
 }
 
 fn folder_loaded_listener(
+    mut commands: Commands,
+    reload_metadata: Res<ReloadMetadata>,
     mut folder_events: MessageReader<AssetEvent<LoadedFolder>>,
-    mut messages: MessageWriter<AssetLoadedMessage>,
+    mut messages: MessageWriter<PayloadLoadedMessage>,
 ) {
     for event in folder_events.read() {
         if let AssetEvent::LoadedWithDependencies { .. } = event {
-            messages.write(AssetLoadedMessage {});
+            messages.write(PayloadLoadedMessage {});
+            commands.run_system(reload_metadata.system_id());
         }
     }
 }
 
-pub(crate) fn assets_plugin(app: &mut App) {
-    app.add_message::<AssetLoadRequest>()
-        .add_message::<AssetUnloadRequest>()
-        .add_message::<AssetLoadedMessage>()
-        .add_systems(Startup, load_global_assets)
+pub(super) fn plugin(app: &mut App) {
+    app.add_message::<PayloadLoadRequest>()
+        .add_message::<PayloadUnloadRequest>()
+        .add_message::<PayloadLoadedMessage>()
+        .add_systems(Startup, load_global_payloads)
         .add_systems(
             Update,
-            (asset_load_request_listener, asset_unload_request_listener),
+            (
+                payload_load_request_listener,
+                payload_unload_request_listener,
+            ),
         )
-        .add_systems(Update, (folder_loaded_listener,));
+        .add_systems(Update, (folder_loaded_listener,))
+        .add_plugins(meta::plugin);
 }

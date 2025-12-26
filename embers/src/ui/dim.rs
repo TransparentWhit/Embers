@@ -1,18 +1,20 @@
 use crate::GameState;
 use crate::dim::actor::item_actor::{ItemActor, item_actor};
+use crate::dim::actor::living::AttributeBase;
 use crate::dim::actor::living::dummy::dummy;
 use crate::dim::actor::living::player::{
     HOTBAR_SLOTS, HotbarSelectionUpdated, Player, PlayerInventory, SelectedHotbarSlot, player,
     process_input_hotbar,
 };
-use crate::dim::actor::tnt::tnt;
-use crate::dim::item::inventory::{
+use crate::dim::actor::primed_tnt::primed_tnt;
+use crate::dim::item::inv::{
     InventorySlot, ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt,
 };
-use crate::dim::item::{ItemStack, sword};
+use crate::dim::item::{ItemStack, sword, tnt};
+use crate::pld::GLOBAL_PAYLOADS;
+use crate::reg::Registry;
 use crate::ui::{ScalableComponent, UIScale, scalable};
 use crate::utils::Keyed;
-use crate::utils::assets::GLOBAL_ASSETS;
 use avian3d::prelude::*;
 use bevy::camera::{ScalingMode, Viewport};
 use bevy::input::keyboard::KeyboardInput;
@@ -54,6 +56,7 @@ struct MainHandSlot;
 fn init(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
+    attribute_bases: Res<Registry<AttributeBase>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -97,28 +100,18 @@ fn init(
                                 margin: UiRect::horizontal(px(scale * 3)),
                                 ..default()
                             }),
-                            GLOBAL_ASSETS.image_node(&asset_server, "hotbar"),
+                            GLOBAL_PAYLOADS.image_node(&asset_server, "hotbar"),
                             Children::spawn({
                                 let mut hotbar_slots = Vec::with_capacity(HOTBAR_SLOTS as usize);
                                 for i in 0..HOTBAR_SLOTS {
                                     hotbar_slots.push((
-                                        scalable(if i == 0 {
-                                            |scale| Node {
-                                                left: px(scale * 1),
-                                                top: px(scale * 1),
-                                                width: px(scale * 16),
-                                                height: px(scale * 16),
-                                                margin: UiRect::all(px(scale * 2)),
-                                                ..default()
-                                            }
-                                        } else {
-                                            |scale| Node {
-                                                top: px(scale * 1),
-                                                width: px(scale * 16),
-                                                height: px(scale * 16),
-                                                margin: UiRect::all(px(scale * 2)),
-                                                ..default()
-                                            }
+                                        scalable(|scale| Node {
+                                            left: px(scale * 1),
+                                            top: px(scale * 1),
+                                            width: px(scale * 16),
+                                            height: px(scale * 16),
+                                            margin: UiRect::all(px(scale * 2)),
+                                            ..default()
                                         }),
                                         ImageNode::default(),
                                         HotbarSlot(i),
@@ -135,7 +128,8 @@ fn init(
                                             height: px(scale * 23),
                                             ..default()
                                         }),
-                                        GLOBAL_ASSETS.image_node(&asset_server, "hotbar_selection"),
+                                        GLOBAL_PAYLOADS
+                                            .image_node(&asset_server, "hotbar_selection"),
                                         HotbarSelection,
                                     )),
                                 )
@@ -148,7 +142,7 @@ fn init(
                                 margin: UiRect::horizontal(px(scale * 3)),
                                 ..default()
                             }),
-                            GLOBAL_ASSETS.image_node(&asset_server, "main_hand"),
+                            GLOBAL_PAYLOADS.image_node(&asset_server, "main_hand"),
                             children![(
                                 scalable(|scale| Node {
                                     left: px(scale * 1),
@@ -204,12 +198,18 @@ fn init(
                     ),
                 ),
                 MeshMaterial3d(materials.add(Color::srgb(0.3, 0.5, 0.3))),
-                player(),
+                player(attribute_bases.as_ref()),
                 Transform::from_xyz(0.0, 1.0, 0.0),
                 LinearVelocity::from(Vec3::new(0., 10., 0.)),
             ),
-            (tnt(&asset_server), Transform::from_xyz(0.0, 0.5, 0.0)),
-            (dummy(&asset_server), Transform::from_xyz(5.0, 0.5, 0.0)),
+            (
+                primed_tnt(&asset_server),
+                Transform::from_xyz(0.0, 0.5, 0.0)
+            ),
+            (
+                dummy(&asset_server, attribute_bases.as_ref()),
+                Transform::from_xyz(5.0, 0.5, 0.0)
+            ),
         ],
     ));
 }
@@ -267,7 +267,7 @@ fn update_hotbar(
         return;
     }
     *main_hand_slot.into_inner() = match player_inventory.main_hand() {
-        Some(item) => GLOBAL_ASSETS.item_image(
+        Some(item) => GLOBAL_PAYLOADS.item_image(
             &asset_server,
             items
                 .get(item)
@@ -278,7 +278,7 @@ fn update_hotbar(
     };
     for (hotbar_image, hotbar_slot) in hotbar_slots.iter_mut() {
         *hotbar_image.into_inner() = match player_inventory.hotbar(hotbar_slot.0) {
-            Some(item) => GLOBAL_ASSETS.item_image(
+            Some(item) => GLOBAL_PAYLOADS.item_image(
                 &asset_server,
                 items
                     .get(item)
@@ -321,6 +321,8 @@ pub(super) fn plugin(app: &mut App) {
         (init, resize_camera, |mut commands: Commands| {
             let sword = commands.spawn(sword()).id();
             commands.spawn(item_actor(sword)).add_child(sword);
+            let tnt = commands.spawn(tnt()).id();
+            commands.spawn(item_actor(tnt)).add_child(tnt);
         })
             .chain(),
     );

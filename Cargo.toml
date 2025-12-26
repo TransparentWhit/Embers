@@ -27,10 +27,13 @@ bevy-tnua = "0.26"
 bevy-tnua-avian3d = "0.8"
 image = { version = "0.25", default-features = false }
 winit = { version = "0.30", default-features = false }
+anyhow = "1.0"
 duplicate = "2.0"
 rand = "0.9"
 regex = "1.12"
+serde = { version = "1.0", features = ["derive"] }
 thiserror = "2.0"
+toml = "0.9"
 syn = { version = "2.0", features = ["full", "extra-traits"] }
 quote = "1.0"
 proc-macro2 = "1.0"

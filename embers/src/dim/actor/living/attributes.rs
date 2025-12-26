@@ -35,7 +35,7 @@ impl AttributeInstance {
     /// Getting the [value](Self::value) of a "virtual" attribute instance is undefined behavior.
     #[inline]
     pub fn new_virtual(key: NamespacedKey) -> Self {
-        Self::new(key, 1.)
+        Self::new(key, f32::NAN)
     }
     #[inline]
     pub fn value(&self) -> f32 {
