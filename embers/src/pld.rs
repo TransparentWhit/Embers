@@ -5,45 +5,10 @@ pub mod meta;
 use crate::GameState;
 use crate::pld::meta::ReloadMetadata;
 use crate::utils::{ConstHashSet, Namespaced, NamespacedKey, const_hash_set};
-use anyhow::Error;
 use bevy::app::App;
-use bevy::asset::io::Reader;
-use bevy::asset::{AssetLoader, AssetPath, LoadContext, LoadedFolder};
+use bevy::asset::{AssetPath, LoadedFolder};
 use bevy::prelude::*;
-use serde::Deserialize;
-use std::marker::PhantomData;
 use std::sync::{LazyLock, Mutex};
-use toml::from_slice;
-
-pub struct MetadataLoader<T: Asset + for<'de> Deserialize<'de>>(
-    &'static [&'static str],
-    PhantomData<T>,
-);
-
-impl<T: Asset + for<'de> Deserialize<'de>> MetadataLoader<T> {
-    pub fn new(extensions: &'static [&'static str]) -> Self {
-        Self(extensions, PhantomData)
-    }
-}
-
-impl<T: Asset + for<'de> Deserialize<'de>> AssetLoader for MetadataLoader<T> {
-    type Asset = T;
-    type Settings = ();
-    type Error = Error;
-    async fn load(
-        &self,
-        reader: &mut dyn Reader,
-        _settings: &Self::Settings,
-        _load_context: &mut LoadContext<'_>,
-    ) -> Result<Self::Asset, Self::Error> {
-        let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes).await?;
-        Ok(from_slice(&bytes)?)
-    }
-    fn extensions(&self) -> &[&str] {
-        self.0
-    }
-}
 
 #[derive(Eq, PartialEq, Hash, Clone)]
 pub struct PayloadScope<'scope> {

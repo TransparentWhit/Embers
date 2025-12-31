@@ -14,47 +14,85 @@ type Physics = (CollisionLayers, Dominance, LockedAxes, RigidBody);
 const FREE: LockedAxes = LockedAxes::new();
 const LOCK_XZ_ROTATION: LockedAxes = LockedAxes::new().lock_rotation_x().lock_rotation_z();
 
-#[derive(PhysicsLayer, Debug, Default, Copy, Clone, Hash, Eq, PartialEq)]
-pub enum CollisionLayer {
+#[derive(PhysicsLayer, Default, Copy, Clone)]
+enum CollisionLayer {
     LivingActor,
-    MiscellaneousActor,
-    PhantomActor,
-    Projectile,
+    MiscActor,
     #[default]
+    Phantom,
+    Projectile,
     Environment,
 }
 
-fn physics_living() -> Physics {
-    (
+impl From<CollisionLayer> for CollisionLayers {
+    fn from(value: CollisionLayer) -> CollisionLayers {
         CollisionLayers::new(
-            CollisionLayer::LivingActor,
-            [
-                CollisionLayer::LivingActor,
-                CollisionLayer::MiscellaneousActor,
-                CollisionLayer::Environment,
-            ],
-        ),
-        Dominance(2),
-        LOCK_XZ_ROTATION,
-        RigidBody::Dynamic,
-    )
+            value,
+            match value {
+                CollisionLayer::Phantom => [
+                    CollisionLayer::LivingActor,
+                    CollisionLayer::MiscActor,
+                    CollisionLayer::Projectile,
+                    CollisionLayer::Environment,
+                ]
+                .into(),
+                CollisionLayer::Environment => [
+                    CollisionLayer::LivingActor,
+                    CollisionLayer::MiscActor,
+                    CollisionLayer::Phantom,
+                    CollisionLayer::Projectile,
+                ]
+                .into(),
+                _ => LayerMask::ALL,
+            },
+        )
+    }
 }
 
-fn physics_miscellaneous() -> Physics {
-    (
-        CollisionLayers::new(
-            CollisionLayer::MiscellaneousActor,
-            [
-                CollisionLayer::LivingActor,
-                CollisionLayer::MiscellaneousActor,
-                CollisionLayer::Projectile,
-                CollisionLayer::Environment,
-            ],
-        ),
-        Dominance(1),
-        LOCK_XZ_ROTATION,
-        RigidBody::Dynamic,
-    )
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum PhysicsPreset {
+    LivingActor,
+    MiscActor,
+    Phantom,
+    Projectile,
+    Environment,
+}
+
+impl PhysicsPreset {
+    pub fn physics(&self) -> Physics {
+        (
+            match self {
+                Self::LivingActor => CollisionLayer::LivingActor,
+                Self::MiscActor => CollisionLayer::MiscActor,
+                Self::Phantom => CollisionLayer::Phantom,
+                Self::Projectile => CollisionLayer::Projectile,
+                Self::Environment => CollisionLayer::Environment,
+            }
+            .into(),
+            Dominance(match self {
+                Self::LivingActor => 3,
+                Self::MiscActor => 2,
+                Self::Phantom => 0,
+                Self::Projectile => 1,
+                Self::Environment => 4,
+            }),
+            match self {
+                Self::LivingActor => LOCK_XZ_ROTATION,
+                _ => FREE,
+            },
+            match self {
+                Self::Environment => RigidBody::Static,
+                _ => RigidBody::Dynamic,
+            },
+        )
+    }
+}
+
+impl From<PhysicsPreset> for Physics {
+    #[inline]
+    fn from(value: PhysicsPreset) -> Physics {
+        value.physics()
+    }
 }
 
 /// Time of the day, within [0, 1).

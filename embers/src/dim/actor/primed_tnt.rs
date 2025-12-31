@@ -1,3 +1,4 @@
+use super::super::PhysicsPreset;
 use super::actor;
 use crate::pld::GLOBAL_PAYLOADS;
 use crate::utils::NamespacedKey;
@@ -5,6 +6,8 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use std::sync::LazyLock;
 use std::time::Duration;
+
+pub static KEY: LazyLock<NamespacedKey> = LazyLock::new(|| NamespacedKey::new_embers("tnt"));
 
 static MODEL_KEY: LazyLock<NamespacedKey> = LazyLock::new(|| NamespacedKey::new_embers("tnt"));
 
@@ -46,10 +49,10 @@ pub(in crate::dim::actor) fn fuse(
 pub fn primed_tnt(asset_server: &AssetServer) -> impl Bundle {
     (
         actor(),
+        PhysicsPreset::MiscActor.physics(),
         Fuse::default(),
         AnimationPlayer::default(),
         SceneRoot(GLOBAL_PAYLOADS.actor_scene(asset_server, &MODEL_KEY, 0)),
         Collider::cuboid(1.0, 1.0, 1.0),
-        RigidBody::Dynamic,
     )
 }

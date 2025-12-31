@@ -1,0 +1,5 @@
+template = "throw"
+
+[config]
+wield = "single"
+timeout = 0.25

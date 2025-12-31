@@ -12,7 +12,7 @@ use crate::dim::item::inv::{
 };
 use crate::dim::item::{ItemStack, sword, tnt};
 use crate::pld::GLOBAL_PAYLOADS;
-use crate::reg::Registry;
+use crate::reg::Reg;
 use crate::ui::{ScalableComponent, UIScale, scalable};
 use crate::utils::Keyed;
 use avian3d::prelude::*;
@@ -56,7 +56,7 @@ struct MainHandSlot;
 fn init(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    attribute_bases: Res<Registry<AttributeBase>>,
+    attribute_bases: Reg<AttributeBase>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {

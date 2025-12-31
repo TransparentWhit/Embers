@@ -1,6 +1,6 @@
 use crate::dim::actor::item_actor::ItemActor;
 use crate::dim::item::{ItemComponent, ItemStack, MaxStackSize, StackCount};
-use crate::reg::DynamicRegistry;
+use crate::reg::{DynamicRegistry, OrRegistry, Registry};
 use crate::utils::Marker;
 use bevy::prelude::*;
 use std::any::type_name;
@@ -91,14 +91,19 @@ fn try_stack(
 ) -> ItemStackResult {
     let source_ref = world.entity(source);
     let target_ref = world.entity(target);
-    if source_ref
+    let item_key = match source_ref
         .get::<ItemStack>()
         .zip(target_ref.get::<ItemStack>())
-        .map(|(source_stack, target_stack)| source_stack != target_stack)
-        .unwrap_or(true)
     {
-        return ItemStackResult::NotStackable;
-    }
+        Some((source, target)) => {
+            if source == target {
+                &source.0
+            } else {
+                return ItemStackResult::NotStackable;
+            }
+        }
+        None => return ItemStackResult::NotStackable,
+    };
     if world
         .resource::<DynamicRegistry<dyn ItemComponent>>()
         .iter()
@@ -114,9 +119,10 @@ fn try_stack(
         ItemMoveQuantity::One => 1,
     }
     .min(
-        source_ref
+        target_ref
             .get::<MaxStackSize>()
             .cloned()
+            .or_registry(world.resource::<Registry<MaxStackSize>>(), item_key)
             .unwrap_or_default()
             .0
             .saturating_sub(target_count),

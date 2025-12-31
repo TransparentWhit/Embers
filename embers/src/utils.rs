@@ -213,6 +213,7 @@ impl fmt::Display for NamespacedKey {
 }
 
 impl From<NamespacedKey> for String {
+    #[inline]
     fn from(value: NamespacedKey) -> Self {
         value.namespaced_key
     }

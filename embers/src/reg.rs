@@ -2,6 +2,7 @@ use crate::utils::{Keyed, NamespacedKey};
 use bevy::prelude::*;
 use std::collections::HashMap;
 use std::marker::PhantomData;
+use std::ops::Deref;
 use thiserror::Error;
 
 pub trait OrRegistry {
@@ -23,7 +24,7 @@ impl<T: Clone> OrRegistry for Option<T> {
     ) -> Self {
         match &self {
             Some(..) => self,
-            None => registry.get(key).cloned(),
+            None => registry.get_cloned(key),
         }
     }
 }
@@ -36,12 +37,9 @@ impl<T: Clone, E> OrRegistry for Result<T, E> {
         registry: impl RegistryAccess<Item = Self::Item>,
         key: &NamespacedKey,
     ) -> Self {
-        match &self {
-            Ok(..) => self,
-            Err(..) => match registry.get(key) {
-                Some(value) => Ok(value.clone()),
-                None => self,
-            },
+        match self {
+            Ok(val) => Ok(val),
+            Err(err) => registry.get_cloned(key).ok_or(err),
         }
     }
 }
@@ -64,8 +62,8 @@ impl<T: Clone> UnwrapOrRegistry for Option<T> {
         key: &NamespacedKey,
     ) -> Self::Item {
         match self {
-            Some(value) => value,
-            None => registry.get(key).cloned().unwrap(),
+            Some(val) => val,
+            None => registry.get_cloned(key).unwrap(),
         }
     }
 }
@@ -79,8 +77,8 @@ impl<T: Clone, E> UnwrapOrRegistry for Result<T, E> {
         key: &NamespacedKey,
     ) -> Self::Item {
         match self {
-            Ok(value) => value,
-            Err(_err) => registry.get(key).cloned().unwrap(),
+            Ok(val) => val,
+            Err(_err) => registry.get_cloned(key).unwrap(),
         }
     }
 }
@@ -89,6 +87,9 @@ pub trait RegistryAccess {
     type Item: ?Sized;
     fn contains(&self, key: &NamespacedKey) -> bool;
     fn get(&self, key: &NamespacedKey) -> Option<&Self::Item>;
+    fn get_cloned(&self, key: &NamespacedKey) -> Option<Self::Item>
+    where
+        Self::Item: Clone;
     fn iter(&self) -> impl Iterator<Item = &Self::Item>;
     fn iter_entries(&self) -> impl Iterator<Item = (&NamespacedKey, &Self::Item)>;
 }
@@ -106,6 +107,10 @@ pub enum RegistryError {
     #[error("An entry with such a key already exists: {key}")]
     EntryAlreadyExists { key: NamespacedKey },
 }
+
+pub type Reg<'world, T> = Res<'world, Registry<T>>;
+
+pub type RegMut<'world, T> = ResMut<'world, Registry<T>>;
 
 #[derive(Resource)]
 pub struct Registry<T: Send + Sync + 'static> {
@@ -133,6 +138,13 @@ impl<T: Send + Sync + 'static> Registry<T> {
     pub fn get(&self, key: &NamespacedKey) -> Option<&T> {
         self.entries.get(key)
     }
+    #[inline]
+    pub fn get_cloned(&self, key: &NamespacedKey) -> Option<T>
+    where
+        T: Clone,
+    {
+        self.get(key).cloned()
+    }
     pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.entries.values()
     }
@@ -150,34 +162,53 @@ impl<T: Send + Sync + 'static> Registry<T> {
         });
         Ok(())
     }
-}
-
-impl<T: Keyed + Send + Sync + 'static> Registry<T> {
     #[inline]
-    pub fn register_keyed(&mut self, value: T) -> Result<(), RegistryError> {
+    pub fn register_keyed(&mut self, value: T) -> Result<(), RegistryError>
+    where
+        T: Keyed,
+    {
         self.register(value.key().clone(), value)
     }
 }
 
-impl<T: Send + Sync + 'static> RegistryAccess for &Registry<T> {
-    type Item = T;
-    #[inline]
-    fn contains(&self, key: &NamespacedKey) -> bool {
-        (*self).contains(key)
-    }
-    #[inline]
-    fn get(&self, key: &NamespacedKey) -> Option<&Self::Item> {
-        (*self).get(key)
-    }
-    #[inline]
-    fn iter(&self) -> impl Iterator<Item = &Self::Item> {
-        (*self).iter()
-    }
-    #[inline]
-    fn iter_entries(&self) -> impl Iterator<Item = (&NamespacedKey, &Self::Item)> {
-        (*self).iter_entries()
-    }
+macro_rules! impl_registry_access {
+    ($type_: ty, $get_registry: ident) => {
+        impl<T: Send + Sync + 'static> RegistryAccess for $type_ {
+            type Item = T;
+            #[inline]
+            fn contains(&self, key: &NamespacedKey) -> bool {
+                self.$get_registry().contains(key)
+            }
+            #[inline]
+            fn get(&self, key: &NamespacedKey) -> Option<&Self::Item> {
+                self.$get_registry().get(key)
+            }
+            #[inline]
+            fn get_cloned(&self, key: &NamespacedKey) -> Option<Self::Item>
+            where
+                Self::Item: Clone,
+            {
+                self.$get_registry().get_cloned(key)
+            }
+            #[inline]
+            fn iter(&self) -> impl Iterator<Item = &Self::Item> {
+                self.$get_registry().iter()
+            }
+            #[inline]
+            fn iter_entries(&self) -> impl Iterator<Item = (&NamespacedKey, &Self::Item)> {
+                self.$get_registry().iter_entries()
+            }
+        }
+    };
 }
+
+impl_registry_access!(&Reg<'_, T>, as_ref);
+impl_registry_access!(&RegMut<'_, T>, as_ref);
+impl_registry_access!(&Registry<T>, deref);
+
+pub type DynReg<'world, T> = Res<'world, DynamicRegistry<T>>;
+
+pub type DynRegMut<'world, T> = ResMut<'world, DynamicRegistry<T>>;
 
 #[derive(Resource)]
 pub struct DynamicRegistry<T: ?Sized + Send + Sync + 'static> {
@@ -206,6 +237,13 @@ impl<T: ?Sized + Send + Sync + 'static> DynamicRegistry<T> {
         self.entries
             .get(key)
             .map(|boxed_value| boxed_value.as_ref())
+    }
+    #[inline]
+    pub fn get_cloned(&self, key: &NamespacedKey) -> Option<T>
+    where
+        T: Clone,
+    {
+        self.get(key).cloned()
     }
     pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.entries
@@ -239,41 +277,56 @@ impl<T: ?Sized + Send + Sync + 'static> DynamicRegistry<T> {
         });
         Ok(())
     }
-}
-
-impl<T: ?Sized + Keyed + Send + Sync + 'static> DynamicRegistry<T> {
     #[inline]
     pub fn register_keyed(&mut self, value: T) -> Result<(), RegistryError>
     where
-        T: Sized,
+        T: Keyed + Sized,
     {
         self.register(value.key().clone(), value)
     }
     #[inline]
-    pub fn register_boxed_keyed(&mut self, boxed_value: Box<T>) -> Result<(), RegistryError> {
+    pub fn register_boxed_keyed(&mut self, boxed_value: Box<T>) -> Result<(), RegistryError>
+    where
+        T: Keyed,
+    {
         self.register_boxed(boxed_value.key().clone(), boxed_value)
     }
 }
 
-impl<T: ?Sized + Send + Sync + 'static> RegistryAccess for &DynamicRegistry<T> {
-    type Item = T;
-    #[inline]
-    fn contains(&self, key: &NamespacedKey) -> bool {
-        (*self).contains(key)
-    }
-    #[inline]
-    fn get(&self, key: &NamespacedKey) -> Option<&Self::Item> {
-        (*self).get(key)
-    }
-    #[inline]
-    fn iter(&self) -> impl Iterator<Item = &Self::Item> {
-        (*self).iter()
-    }
-    #[inline]
-    fn iter_entries(&self) -> impl Iterator<Item = (&NamespacedKey, &Self::Item)> {
-        (*self).iter_entries()
-    }
+macro_rules! impl_dyn_registry_access {
+    ($type_: ty, $get_registry: ident) => {
+        impl<T: ?Sized + Send + Sync + 'static> RegistryAccess for $type_ {
+            type Item = T;
+            #[inline]
+            fn contains(&self, key: &NamespacedKey) -> bool {
+                self.$get_registry().contains(key)
+            }
+            #[inline]
+            fn get(&self, key: &NamespacedKey) -> Option<&Self::Item> {
+                self.$get_registry().get(key)
+            }
+            #[inline]
+            fn get_cloned(&self, key: &NamespacedKey) -> Option<Self::Item>
+            where
+                Self::Item: Clone,
+            {
+                self.$get_registry().get_cloned(key)
+            }
+            #[inline]
+            fn iter(&self) -> impl Iterator<Item = &Self::Item> {
+                self.$get_registry().iter()
+            }
+            #[inline]
+            fn iter_entries(&self) -> impl Iterator<Item = (&NamespacedKey, &Self::Item)> {
+                self.$get_registry().iter_entries()
+            }
+        }
+    };
 }
+
+impl_dyn_registry_access!(&DynReg<'_, T>, as_ref);
+impl_dyn_registry_access!(&DynRegMut<'_, T>, as_ref);
+impl_dyn_registry_access!(&DynamicRegistry<T>, deref);
 
 fn broadcast_registry_events<T: Send + Sync + 'static>(
     mut registry: ResMut<Registry<T>>,
