@@ -1,1 +1,5 @@
 weight = 2
+
+[initial_actions]
+hands_click = "spear_attack_0"
+hands_double_click = "spear_throw"

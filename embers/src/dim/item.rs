@@ -1,17 +1,22 @@
 pub mod inv;
 
-use crate::dim::actor::living::player::PlayerFacing;
+use crate::dim::actor::living::player::Player;
 use crate::dim::actor::primed_tnt::primed_tnt;
+use crate::dim::{CollisionLayer, exclude_source};
 use crate::reg::{DynRegMut, DynamicRegistry, Registry, RegistryError, RegistryInitExt};
+use crate::utils::physics::section;
 use crate::utils::{Keyed, NamespacedKey, UntypedCmp, UntypedPartialCmp};
 use anyhow::Error;
 use avian3d::prelude::*;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use embers_macros::identify;
 use serde::{Deserialize, Serialize};
+use std::iter::once;
 use std::marker::PhantomData;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
+use thiserror::Error;
 use toml::{Table, Value};
 
 pub mod embers {
@@ -153,13 +158,13 @@ pub enum HandActionWield {
     Dual,
 }
 
-pub type ItemActionEnvironment<'action, 'cmd_world, 'cmd_state, 'sq_world, 'sq_state> = (
-    &'action mut Commands<'cmd_world, 'cmd_state>,
-    &'action SpatialQuery<'sq_world, 'sq_state>,
-    &'action AssetServer,
-    &'action Transform,
-    &'action PlayerFacing,
-);
+#[derive(SystemParam)]
+pub struct ItemActionEnvironment<'w, 's> {
+    commands: Commands<'w, 's>,
+    spatial_query: SpatialQuery<'w, 's>,
+    asset_server: Res<'w, AssetServer>,
+    player: Single<'w, 's, (Entity, &'static Transform), With<Player>>,
+}
 
 pub trait ItemActionTemplate: Send + Sync {
     fn create(&self, key: NamespacedKey, config: Table) -> Result<ItemAction, Error>;
@@ -193,71 +198,34 @@ impl Keyed for ItemAction {
 }
 
 #[derive(Default, Eq, PartialEq, Clone)]
-pub struct SlotItemActions(
-    /// Click
-    Option<ItemAction>,
-    /// Double click
-    Option<ItemAction>,
-);
+pub struct SlotItemActions {
+    click: Option<ItemAction>,
+    double_click: Option<ItemAction>,
+}
 
 impl SlotItemActions {
     pub fn get(&self, trigger: ItemActionTrigger) -> Option<&ItemAction> {
         match trigger {
-            ItemActionTrigger::Click => self.0.as_ref(),
-            ItemActionTrigger::DoubleClick => self.1.as_ref(),
+            ItemActionTrigger::Click => self.click.as_ref(),
+            ItemActionTrigger::DoubleClick => self.double_click.as_ref(),
         }
     }
     pub fn get_mut(&mut self, trigger: ItemActionTrigger) -> Option<&mut ItemAction> {
         match trigger {
-            ItemActionTrigger::Click => self.0.as_mut(),
-            ItemActionTrigger::DoubleClick => self.1.as_mut(),
+            ItemActionTrigger::Click => self.click.as_mut(),
+            ItemActionTrigger::DoubleClick => self.double_click.as_mut(),
         }
     }
     pub fn set(&mut self, trigger: ItemActionTrigger, action: ItemAction) {
         match trigger {
-            ItemActionTrigger::Click => self.0 = Some(action),
-            ItemActionTrigger::DoubleClick => self.1 = Some(action),
+            ItemActionTrigger::Click => self.click = Some(action),
+            ItemActionTrigger::DoubleClick => self.double_click = Some(action),
         }
     }
     pub fn clear(&mut self, trigger: ItemActionTrigger) {
         match trigger {
-            ItemActionTrigger::Click => self.0 = None,
-            ItemActionTrigger::DoubleClick => self.1 = None,
-        }
-    }
-}
-
-#[derive(Component, Eq, PartialEq)]
-pub struct ItemActions(
-    /// Hands
-    SlotItemActions,
-    /// Armor
-    SlotItemActions,
-);
-
-impl ItemActions {
-    pub fn new(actions: impl IntoIterator<Item = ItemAction>) -> Self {
-        let mut hands_actions = SlotItemActions::default();
-        let mut armor_actions = SlotItemActions::default();
-        for action in actions.into_iter() {
-            match action.wield.slot() {
-                ItemActionSlot::Hands => &mut hands_actions,
-                ItemActionSlot::Armor => &mut armor_actions,
-            }
-            .set(action.trigger, action);
-        }
-        Self(hands_actions, armor_actions)
-    }
-    pub fn get(&self, slot: ItemActionSlot) -> &SlotItemActions {
-        match slot {
-            ItemActionSlot::Hands => &self.0,
-            ItemActionSlot::Armor => &self.1,
-        }
-    }
-    pub fn get_mut(&mut self, slot: ItemActionSlot) -> &mut SlotItemActions {
-        match slot {
-            ItemActionSlot::Hands => &mut self.0,
-            ItemActionSlot::Armor => &mut self.1,
+            ItemActionTrigger::Click => self.click = None,
+            ItemActionTrigger::DoubleClick => self.double_click = None,
         }
     }
 }
@@ -279,43 +247,7 @@ pub fn sword() -> impl Bundle {
 }
 
 pub fn spear() -> impl Bundle {
-    (
-        ItemStack(embers::SPEAR.clone()),
-        /*ItemActions::new([
-            ItemAction {
-                key: NamespacedKey::new_embers("spear_attack_0"),
-                on_begin: Arc::new(|_environment| {
-                    println!("started");
-                }),
-                on_end: Arc::new(
-                    |(_commands, spatial_query, _asset_server, transform, _player_facing),
-                     duration| {
-                        //spatial_query.cast_shape(, transform.translation, transform.rotation, )
-                        println!("ended {:?}", duration);
-                        None
-                    },
-                ),
-                trigger: ItemActionTrigger::Click,
-                wield: ItemActionWield::Hands(HandActionWield::Single),
-                duration: Duration::from_millis(500),
-            },
-            ItemAction {
-                key: NamespacedKey::new_embers("spear_throw"),
-                on_begin: &|_environment| {},
-                on_end: &|(commands, _spatial_query, _asset_server, transform, _player_facing),
-                          duration| {
-                    if duration.is_none() {
-                        println!("Throwing spear into the console");
-                        commands.spawn(());
-                    }
-                    None
-                },
-                trigger: ItemActionTrigger::DoubleClick,
-                wield: ItemActionWield::Hands(HandActionWield::Single),
-                duration: Duration::from_millis(500),
-            },
-        ]),*/
-    )
+    ItemStack(embers::SPEAR.clone())
 }
 
 pub fn tnt() -> impl Bundle {
@@ -391,13 +323,24 @@ pub(super) fn plugin(app: &mut App) {
                                 #[derive(Deserialize)]
                                 struct Melee {
                                     damage: f32,
-                                    arc: f32,
+                                    arc_deg: f32,
                                     range: f32,
                                     wield: HandActionWield,
-                                    duration: f32,
+                                    duration_secs: f32,
                                     next_action: Option<String>,
                                 }
                                 let action = Melee::deserialize(config)?;
+                                #[derive(Debug, Error)]
+                                #[error("Couldn't create a collider for the given arc_deg({arc_deg}) and range({range}).")]
+                                struct NoCollider {
+                                    arc_deg: f32,
+                                    range: f32,
+                                }
+                                let collider = section(action.arc_deg.to_radians(), action.range, 1.).ok_or(NoCollider {
+                                    arc_deg: action.arc_deg,
+                                    range: action.range,
+                                })?;
+                                let spatial_query_filter = SpatialQueryFilter::from_mask(CollisionLayer::LivingActor);
                                 let next_action = action.next_action.as_ref().and_then(|next| {
                                     NamespacedKey::try_from_with_namespaced(next.as_str(), &key)
                                         .ok()
@@ -405,18 +348,18 @@ pub(super) fn plugin(app: &mut App) {
                                 Ok(ItemAction {
                                     on_begin: Arc::new(|_environment| {}),
                                     on_end: Arc::new(
-                                        move |(
-                                            _commands,
+                                        move |ItemActionEnvironment {
+                                            commands,
                                             spatial_query,
-                                            _asset_server,
-                                            transform,
-                                            _player_facing,
-                                        ),
+                                            asset_server: _,
+                                            player,
+                                        },
                                               duration| {
+                                            let (player, transform) = **player;
                                             if duration.is_none() {
-                                                // todo
-                                                //spatial_query.cast_shape();
-                                                println!("melee");
+                                                for entity in spatial_query.shape_intersections(&collider, transform.translation, transform.rotation, &spatial_query_filter.clone().with_excluded_entities(once(player))) {
+                                                    // todo
+                                                }
                                                 next_action.clone()
                                             } else {
                                                 None
@@ -425,7 +368,7 @@ pub(super) fn plugin(app: &mut App) {
                                     ),
                                     trigger: ItemActionTrigger::Click,
                                     wield: ItemActionWield::Hands(action.wield),
-                                    duration: Duration::from_secs_f32(action.duration),
+                                    duration: Duration::from_secs_f32(action.duration_secs),
                                     key,
                                 })
                             }),
@@ -435,37 +378,36 @@ pub(super) fn plugin(app: &mut App) {
                             Box::new(|key, config| {
                                 #[derive(Deserialize)]
                                 struct Throw {
+                                    velocity: f32,
                                     wield: HandActionWield,
-                                    timeout: f32,
+                                    timeout_secs: f32,
                                     next_action: Option<String>,
                                 }
                                 let action = Throw::deserialize(config)?;
+                                let velocity = action.velocity;
                                 let next_action = action.next_action.as_ref().and_then(|next| {
                                     NamespacedKey::try_from_with_namespaced(next.as_str(), &key)
                                         .ok()
                                 });
                                 Ok(ItemAction {
-                                    on_begin: Arc::new(|_environment| {}),
-                                    on_end: Arc::new(
-                                        move |(
+                                    on_begin: Arc::new(move |ItemActionEnvironment {
                                             commands,
-                                            _spatial_query,
+                                            spatial_query: _,
                                             asset_server,
-                                            transform,
-                                            player_facing,
-                                        ),
-                                              _duration| {
+                                            player,
+                                        }| {
+                                            let (player, transform) = **player;
                                             commands.spawn((
                                                 primed_tnt(asset_server),
-                                                **transform,
-                                                LinearVelocity(player_facing.0.as_vec3() * 6.),
+                                                exclude_source(player),
+                                                *transform,
+                                                LinearVelocity(transform.rotation * -Vec3::Z * velocity),
                                             ));
-                                            next_action.clone()
-                                        },
-                                    ),
+                                        }),
+                                    on_end: Arc::new(move |_environment, _duration| next_action.clone()),
                                     trigger: ItemActionTrigger::Click,
                                     wield: ItemActionWield::Hands(action.wield),
-                                    duration: Duration::from_secs_f32(action.timeout),
+                                    duration: Duration::from_secs_f32(action.timeout_secs),
                                     key,
                                 })
                             }),
@@ -476,7 +418,7 @@ pub(super) fn plugin(app: &mut App) {
                                 #[derive(Deserialize)]
                                 struct ChargedThrow {
                                     wield: HandActionWield,
-                                    hold_threshold: Option<f32>,
+                                    hold_threshold_secs: Option<f32>,
                                     hold_action: Option<String>,
                                 }
                                 let action = ChargedThrow::deserialize(config)?;
@@ -487,13 +429,12 @@ pub(super) fn plugin(app: &mut App) {
                                 Ok(ItemAction {
                                     on_begin: Arc::new(|_environment| {}),
                                     on_end: Arc::new(
-                                        move |(
-                                            _commands,
-                                            spatial_query,
-                                            _asset_server,
-                                            transform,
-                                            _player_facing,
-                                        ),
+                                        move |ItemActionEnvironment {
+                                            commands,
+                                            spatial_query: _,
+                                            asset_server,
+                                            player,
+                                        },
                                               duration| {
                                             if duration.is_none() {
                                                 hold_action.clone()
@@ -506,7 +447,7 @@ pub(super) fn plugin(app: &mut App) {
                                     trigger: ItemActionTrigger::DoubleClick,
                                     wield: ItemActionWield::Hands(action.wield),
                                     duration: action
-                                        .hold_threshold
+                                        .hold_threshold_secs
                                         .map_or(Duration::MAX, Duration::from_secs_f32),
                                     key,
                                 })

@@ -1,3 +1,5 @@
+pub mod physics;
+
 use bevy::asset::uuid::Uuid;
 use bevy::prelude::*;
 use regex::Regex;

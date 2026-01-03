@@ -1,0 +1,9 @@
+template = "melee"
+
+[config]
+damage = 8.0
+arc_deg = 30.0
+range = 6.0
+wield = "dual"
+duration_secs = 0.5
+next_action = "spear_attack_0"

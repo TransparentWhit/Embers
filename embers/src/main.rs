@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 pub mod dim;
 pub mod input;
 pub mod pld;
@@ -11,6 +13,7 @@ use bevy::DefaultPlugins;
 use bevy::image::ImageSamplerDescriptor;
 use bevy::prelude::*;
 use bevy::winit::WINIT_WINDOWS;
+use bevy_hanabi::HanabiPlugin;
 use bevy_tnua::prelude::TnuaControllerPlugin;
 use bevy_tnua_avian3d::TnuaAvian3dPlugin;
 use std::path::MAIN_SEPARATOR_STR;
@@ -42,7 +45,10 @@ fn main() {
                     default_sampler: ImageSamplerDescriptor::nearest(),
                 }),
         )
-        .add_plugins(PhysicsPlugins::default())
+        .add_plugins(HanabiPlugin)
+        .add_plugins(
+            PhysicsPlugins::default().with_collision_hooks::<dim::SourceExclusionCollisionHooks>(),
+        )
         .add_plugins(TnuaControllerPlugin::new(PhysicsSchedule))
         .add_plugins(TnuaAvian3dPlugin::new(PhysicsSchedule))
         .add_plugins(dim::plugin)

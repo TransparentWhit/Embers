@@ -1,5 +1,6 @@
 template = "throw"
 
 [config]
+velocity = 20.0
 wield = "single"
-timeout = 0.25
+timeout_secs = 0.25

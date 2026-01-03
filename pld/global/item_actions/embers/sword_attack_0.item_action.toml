@@ -2,8 +2,8 @@ template = "melee"
 
 [config]
 damage = 7.0
-arc = 120.0
+arc_deg = 120.0
 range = 5.0
 wield = "single"
-duration = 0.5
+duration_secs = 0.5
 next_action = "sword_attack_0"

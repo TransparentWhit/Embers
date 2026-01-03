@@ -1,3 +1,4 @@
+use crate::dim::Particles;
 use crate::dim::actor::living::AttributeBase;
 use crate::dim::item::{ItemAction, ItemActionTemplate, ItemComponent};
 use crate::reg::{DynReg, DynamicRegistry, RegMut, Registry};
@@ -7,11 +8,17 @@ use bevy::asset::io::Reader;
 use bevy::asset::{AssetLoader, AssetServer, LoadContext};
 use bevy::ecs::system::{SystemId, SystemState};
 use bevy::prelude::*;
+use bevy::tasks::ConditionalSendFuture;
+use bevy_hanabi::{
+    Attribute, EffectAsset, EffectMaterial, Module, ParticleEffect, SetAttributeModifier,
+    SpawnerSettings,
+};
 use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::LazyLock;
+use thiserror::Error;
 use toml::{Table, from_slice};
 
 #[derive(Resource)]
@@ -53,19 +60,79 @@ static ITEM_PROTOTYPE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 #[derive(Asset, Debug, Deserialize, TypePath)]
 struct ItemPrototype(Table);
 
-pub struct MetadataLoader<T: Asset + for<'de> Deserialize<'de>>(
+static PARTICLE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"particles/(?P<namespace>[A-Za-z0-9_]+)(?P<key>(?:/[A-Za-z0-9_]+)+)\.particle\.toml$",
+    )
+    .unwrap()
+});
+
+#[derive(Asset, Debug, Deserialize, TypePath)]
+struct ParticleMeta {
+    max_particles: u32,
+    spawn_count: f32,
+    spawn_duration_secs: f32,
+    spawn_period_secs: f32,
+    spawn_cycles: u32,
+}
+
+struct TextureAtlasMetadataLoader;
+
+impl AssetLoader for TextureAtlasMetadataLoader {
+    type Asset = TextureAtlasLayout;
+    type Settings = ();
+    type Error = Error;
+    async fn load(
+        &self,
+        reader: &mut dyn Reader,
+        _settings: &Self::Settings,
+        _load_context: &mut LoadContext<'_>,
+    ) -> Result<Self::Asset, Self::Error> {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).await?;
+        #[derive(Deserialize)]
+        enum TextureAtlasPreset {
+            Grid {
+                tile: UVec2,
+                columns: u32,
+                rows: u32,
+                padding: Option<UVec2>,
+                offset: Option<UVec2>,
+            },
+        }
+        impl From<TextureAtlasPreset> for TextureAtlasLayout {
+            fn from(value: TextureAtlasPreset) -> Self {
+                match value {
+                    TextureAtlasPreset::Grid {
+                        tile,
+                        columns,
+                        rows,
+                        padding,
+                        offset,
+                    } => Self::from_grid(tile, columns, rows, padding, offset),
+                }
+            }
+        }
+        Ok(from_slice::<TextureAtlasPreset>(&bytes)?.into())
+    }
+    fn extensions(&self) -> &[&str] {
+        &["atlas.toml"]
+    }
+}
+
+struct RawMetadataLoader<M: Asset + for<'de> Deserialize<'de>>(
     &'static [&'static str],
-    PhantomData<T>,
+    PhantomData<M>,
 );
 
-impl<T: Asset + for<'de> Deserialize<'de>> MetadataLoader<T> {
+impl<M: Asset + for<'de> Deserialize<'de>> RawMetadataLoader<M> {
     pub fn new(extensions: &'static [&'static str]) -> Self {
         Self(extensions, PhantomData)
     }
 }
 
-impl<T: Asset + for<'de> Deserialize<'de>> AssetLoader for MetadataLoader<T> {
-    type Asset = T;
+impl<M: Asset + for<'de> Deserialize<'de>> AssetLoader for RawMetadataLoader<M> {
+    type Asset = M;
     type Settings = ();
     type Error = Error;
     async fn load(
@@ -94,6 +161,7 @@ pub fn reload_metadata(
             RegMut<ItemAction>,
         ),
         Res<Assets<ItemPrototype>>,
+        (Res<Assets<ParticleMeta>>, RegMut<Particles>),
     )>,
 ) {
     let (
@@ -101,6 +169,7 @@ pub fn reload_metadata(
         (actor_bases, mut attribute_bases),
         (item_action_metas, item_action_templates, mut item_actions),
         item_prototypes,
+        (particle_metas, mut particles),
     ) = state.get_mut(world);
     fn process_meta<M: Asset>(
         asset_server: &AssetServer,
@@ -178,6 +247,40 @@ pub fn reload_metadata(
             }
         },
     );
+    process_meta(
+        &asset_server,
+        &particle_metas,
+        &PARTICLE_PATTERN,
+        "particle",
+        &mut |key, particle| {
+            let mut module = Module::default();
+            let lifetime = SetAttributeModifier::new(Attribute::LIFETIME, module.lit(3.));
+            particles
+                .register(
+                    key.clone(),
+                    Particles::new(
+                        ParticleEffect::new(
+                            asset_server.add(
+                                EffectAsset::new(
+                                    particle.max_particles,
+                                    SpawnerSettings::new(
+                                        particle.spawn_count.into(),
+                                        particle.spawn_duration_secs.into(),
+                                        particle.spawn_period_secs.into(),
+                                        particle.spawn_cycles,
+                                    ),
+                                    module,
+                                )
+                                .init(lifetime)
+                                .with_name(key),
+                            ),
+                        ),
+                        EffectMaterial { images: vec![] },
+                    ),
+                )
+                .expect("Failed to register particle");
+        },
+    );
     world.resource_scope::<DynamicRegistry<dyn ItemComponent>, ()>(|world, item_components| {
         for item_component in item_components.iter() {
             item_component.reset_registry(world);
@@ -198,10 +301,15 @@ pub fn reload_metadata(
 pub(super) fn plugin(app: &mut App) {
     let reload_metadata = ReloadMetadata(app.register_system(reload_metadata));
     app.init_asset::<ActorBase>()
-        .register_asset_loader(MetadataLoader::<ActorBase>::new(&["actor.toml"]))
+        .register_asset_loader(RawMetadataLoader::<ActorBase>::new(&["actor.toml"]))
         .init_asset::<ItemActionMeta>()
-        .register_asset_loader(MetadataLoader::<ItemActionMeta>::new(&["item_action.toml"]))
+        .register_asset_loader(RawMetadataLoader::<ItemActionMeta>::new(&[
+            "item_action.toml",
+        ]))
         .init_asset::<ItemPrototype>()
-        .register_asset_loader(MetadataLoader::<ItemPrototype>::new(&["item.toml"]))
+        .register_asset_loader(RawMetadataLoader::<ItemPrototype>::new(&["item.toml"]))
+        .init_asset::<ParticleMeta>()
+        .register_asset_loader(RawMetadataLoader::<ParticleMeta>::new(&["particle.toml"]))
+        .register_asset_loader(TextureAtlasMetadataLoader)
         .insert_resource(reload_metadata);
 }

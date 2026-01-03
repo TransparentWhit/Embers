@@ -6,14 +6,12 @@ use crate::dim::actor::living::player::{
     HOTBAR_SLOTS, HotbarSelectionUpdated, Player, PlayerInventory, SelectedHotbarSlot, player,
     process_input_hotbar,
 };
-use crate::dim::actor::primed_tnt::primed_tnt;
 use crate::dim::item::inv::{
     InventorySlot, ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt,
 };
 use crate::dim::item::{ItemStack, sword, tnt};
 use crate::pld::GLOBAL_PAYLOADS;
 use crate::reg::Reg;
-use crate::ui::{ScalableComponent, UIScale, scalable};
 use crate::utils::Keyed;
 use avian3d::prelude::*;
 use bevy::camera::{ScalingMode, Viewport};
@@ -79,40 +77,40 @@ fn init(
                     ..default()
                 },
                 children![(
-                    scalable(|scale| Node {
+                    Node {
                         left: percent(50),
-                        bottom: px(scale * 7),
-                        margin: UiRect::left(px(scale * -185 / 2)),
+                        bottom: px(7),
+                        margin: UiRect::left(px(-92.5)),
                         position_type: PositionType::Absolute,
-                        width: px(scale * 185),
-                        height: px(scale * 18),
+                        width: px(185),
+                        height: px(18),
                         display: Display::Flex,
                         flex_direction: FlexDirection::Row,
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         ..default()
-                    }),
+                    },
                     children![
                         (
-                            scalable(|scale| Node {
-                                width: px(scale * 122),
-                                height: px(scale * 22),
-                                margin: UiRect::horizontal(px(scale * 3)),
+                            Node {
+                                width: px(122),
+                                height: px(22),
+                                margin: UiRect::horizontal(px(3)),
                                 ..default()
-                            }),
+                            },
                             GLOBAL_PAYLOADS.image_node(&asset_server, "hotbar"),
                             Children::spawn({
                                 let mut hotbar_slots = Vec::with_capacity(HOTBAR_SLOTS as usize);
                                 for i in 0..HOTBAR_SLOTS {
                                     hotbar_slots.push((
-                                        scalable(|scale| Node {
-                                            left: px(scale * 1),
-                                            top: px(scale * 1),
-                                            width: px(scale * 16),
-                                            height: px(scale * 16),
-                                            margin: UiRect::all(px(scale * 2)),
+                                        Node {
+                                            left: px(1),
+                                            top: px(1),
+                                            width: px(16),
+                                            height: px(16),
+                                            margin: UiRect::all(px(2)),
                                             ..default()
-                                        }),
+                                        },
                                         ImageNode::default(),
                                         HotbarSlot(i),
                                     ));
@@ -120,14 +118,14 @@ fn init(
                                 (
                                     hotbar_slots,
                                     Spawn((
-                                        scalable(|scale| Node {
+                                        Node {
                                             position_type: PositionType::Absolute,
-                                            left: px(scale * -1),
-                                            top: px(scale * -1),
-                                            width: px(scale * 24),
-                                            height: px(scale * 23),
+                                            left: px(-1),
+                                            top: px(-1),
+                                            width: px(24),
+                                            height: px(23),
                                             ..default()
-                                        }),
+                                        },
                                         GLOBAL_PAYLOADS
                                             .image_node(&asset_server, "hotbar_selection"),
                                         HotbarSelection,
@@ -136,22 +134,22 @@ fn init(
                             })
                         ),
                         (
-                            scalable(|scale| Node {
-                                width: px(scale * 22),
-                                height: px(scale * 22),
-                                margin: UiRect::horizontal(px(scale * 3)),
+                            Node {
+                                width: px(22),
+                                height: px(22),
+                                margin: UiRect::horizontal(px(3)),
                                 ..default()
-                            }),
+                            },
                             GLOBAL_PAYLOADS.image_node(&asset_server, "main_hand"),
                             children![(
-                                scalable(|scale| Node {
-                                    left: px(scale * 1),
-                                    top: px(scale * 1),
-                                    width: px(scale * 16),
-                                    height: px(scale * 16),
-                                    margin: UiRect::all(px(scale * 2)),
+                                Node {
+                                    left: px(1),
+                                    top: px(1),
+                                    width: px(16),
+                                    height: px(16),
+                                    margin: UiRect::all(px(2)),
                                     ..default()
-                                }),
+                                },
                                 ImageNode::default(),
                                 MainHandSlot,
                             ),]
@@ -201,10 +199,6 @@ fn init(
                 player(attribute_bases.as_ref()),
                 Transform::from_xyz(0.0, 1.0, 0.0),
                 LinearVelocity::from(Vec3::new(0., 10., 0.)),
-            ),
-            (
-                primed_tnt(&asset_server),
-                Transform::from_xyz(0.0, 0.5, 0.0)
             ),
             (
                 dummy(&asset_server, attribute_bases.as_ref()),
@@ -294,24 +288,19 @@ fn update_inventory(player_inventory: Single<&PlayerInventory>) {}
 
 fn update_hotbar_selection(
     hotbar_selection_updated_reader: MessageReader<HotbarSelectionUpdated>,
-    mut hotbar_selection_node: Single<
-        (&mut ScalableComponent<Node>, &mut Node),
-        With<HotbarSelection>,
-    >,
+    mut hotbar_selection_node: Single<&mut Node, With<HotbarSelection>>,
     selected_hotbar_slot: Single<&SelectedHotbarSlot>,
 ) {
     if !hotbar_selection_updated_reader.is_empty() {
-        let (scalable, hotbar_selection_node) = hotbar_selection_node.deref_mut();
-        let selected_hotbar_slot = selected_hotbar_slot.0 as UIScale;
-        **scalable = ScalableComponent::dynamic(move |scale| Node {
+        let ref mut hotbar_selection_node = *hotbar_selection_node;
+        **hotbar_selection_node = Node {
             position_type: PositionType::Absolute,
-            left: px(scale * (-1 + selected_hotbar_slot * 20)),
-            top: px(scale * -1),
-            width: px(scale * 24),
-            height: px(scale * 23),
+            left: px(-1 + selected_hotbar_slot.0 * 20),
+            top: px(-1),
+            width: px(24),
+            height: px(23),
             ..default()
-        });
-        scalable.apply(hotbar_selection_node);
+        };
     }
 }
 

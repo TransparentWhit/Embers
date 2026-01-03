@@ -1,0 +1,4 @@
+template = "charged_throw"
+
+[config]
+wield = "dual"

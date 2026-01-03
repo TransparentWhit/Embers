@@ -62,34 +62,17 @@ controls!(CONTROLS_SWAP_OFF_HAND, K@KeyF);
 controls!(CONTROLS_INVENTORY, K@KeyR);
 
 fn process_input_item_actions(
-    mut commands: Commands,
-    spatial_query: SpatialQuery,
-    asset_server: Res<AssetServer>,
+    mut environment: ItemActionEnvironment,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     double_clicks: Res<DoubleClicks>,
-    mut player: Single<
-        (
-            &mut PlayerActionStatus,
-            &Transform,
-            &mut PlayerEquipmentActions,
-        ),
-        With<Player>,
-    >,
+    mut player: Single<(&mut PlayerActionStatus, &mut PlayerEquipmentActions), With<Player>>,
     item_action_reg: Reg<ItemAction>,
-    player_facing: Res<PlayerFacing>,
     hotbar_selection_updated_reader: MessageReader<HotbarSelectionUpdated>,
     off_hand_swapped_reader: MessageReader<OffHandSwapped>,
     time: Res<Time>,
 ) {
-    let (ref mut action_status, transform, ref mut equipment_actions) = *player;
-    let mut environment: ItemActionEnvironment = (
-        &mut commands,
-        &spatial_query,
-        &asset_server,
-        transform,
-        &player_facing,
-    );
+    let (ref mut action_status, ref mut equipment_actions) = *player;
     let mut update_slot_action = |equipment_slot: EquipmentSlot, control: &RwLock<InputButton>| {
         let mut trigger = if double_clicks.double_clicked(*control.read().unwrap()) {
             Some(ItemActionTrigger::DoubleClick)
@@ -276,16 +259,12 @@ pub fn process_input_hotbar(
     update_equipment_slot_actions(EquipmentSlot::Armor, inventory.armor());
 }
 
-#[derive(Resource)]
-pub struct PlayerFacing(pub Dir3);
-
 fn process_input_movement(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut player: Single<(&Attributes, &mut TnuaController), With<Player>>,
     player_camera: Single<(&Camera, &PlayerCamera), With<PlayerCamera>>,
-    mut player_facing: ResMut<PlayerFacing>,
 ) {
     let (attributes, ref mut controller) = *player;
     let forward = if pressed(&CONTROLS_MOVEMENT, &keys, &mouse)
@@ -314,8 +293,7 @@ fn process_input_movement(
         }
     } else {
         None
-    }
-    .inspect(|direction| player_facing.0 = *direction);
+    };
     controller.basis(TnuaBuiltinWalk {
         float_height: FLOAT_HEIGHT,
         desired_velocity: forward
@@ -334,7 +312,7 @@ fn process_input_movement(
 
 pub static KEY: LazyLock<NamespacedKey> = LazyLock::new(|| NamespacedKey::new_embers("player"));
 
-const FLOAT_HEIGHT: f32 = 0.85;
+const FLOAT_HEIGHT: f32 = 1.0;
 
 #[derive(Component, Debug)]
 #[require(
@@ -513,7 +491,6 @@ pub fn player(attribute_bases: impl RegistryAccess<Item = AttributeBase>) -> imp
 pub(in crate::dim) fn plugin(app: &mut App) {
     app.add_message::<HotbarSelectionUpdated>();
     app.add_message::<OffHandSwapped>();
-    app.insert_resource(PlayerFacing(Dir3::X));
     app.add_systems(
         Update,
         (
