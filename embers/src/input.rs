@@ -51,6 +51,13 @@ pub enum InputButton {
     MouseButton(MouseButton),
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum InteractionTrigger {
+    #[default]
+    Click,
+    DoubleClick,
+}
+
 #[derive(Resource)]
 pub struct DoubleClicks {
     clicks: HashMap<InputButton, Stopwatch>,

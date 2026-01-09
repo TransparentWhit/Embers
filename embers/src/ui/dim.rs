@@ -292,7 +292,6 @@ fn update_hotbar_selection(
     selected_hotbar_slot: Single<&SelectedHotbarSlot>,
 ) {
     if !hotbar_selection_updated_reader.is_empty() {
-        let ref mut hotbar_selection_node = *hotbar_selection_node;
         **hotbar_selection_node = Node {
             position_type: PositionType::Absolute,
             left: px(-1 + selected_hotbar_slot.0 * 20),

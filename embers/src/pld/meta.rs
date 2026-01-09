@@ -8,7 +8,6 @@ use bevy::asset::io::Reader;
 use bevy::asset::{AssetLoader, AssetServer, LoadContext};
 use bevy::ecs::system::{SystemId, SystemState};
 use bevy::prelude::*;
-use bevy::tasks::ConditionalSendFuture;
 use bevy_hanabi::{
     Attribute, EffectAsset, EffectMaterial, Module, ParticleEffect, SetAttributeModifier,
     SpawnerSettings,
@@ -18,7 +17,6 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::LazyLock;
-use thiserror::Error;
 use toml::{Table, from_slice};
 
 #[derive(Resource)]

@@ -2,16 +2,23 @@ pub mod actor;
 pub mod item;
 
 use crate::dim::actor::living::player;
+use crate::dim::actor::living::player::{Player, PlayerInventory};
+use crate::input::InteractionTrigger;
 use crate::pld::PayloadScope;
+use crate::reg::Reg;
 use crate::utils::{Keyed, Namespaced, NamespacedKey};
 use avian3d::prelude::PhysicsLayer;
 use avian3d::prelude::*;
 use avian3d::schedule::LastPhysicsTick;
-use bevy::ecs::component::Tick;
-use bevy::ecs::system::SystemParam;
+use bevy::ecs::component::{Mutable, Tick};
+use bevy::ecs::query::QueryFilter;
+use bevy::ecs::system::{StaticSystemParam, SystemParam};
 use bevy::prelude::*;
+use bevy::time::Stopwatch;
 use bevy_hanabi::{EffectMaterial, ParticleEffect};
-use std::sync::LazyLock;
+use embers_macros::identify;
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 type Physics = (CollisionLayers, Dominance, LockedAxes, RigidBody);
 
@@ -161,6 +168,263 @@ pub struct Particles(ParticleEffect, EffectMaterial);
 impl Particles {
     pub fn new(effect: ParticleEffect, material: EffectMaterial) -> Self {
         Self(effect, material)
+    }
+}
+
+pub trait Action: Keyed + Clone {
+    type Environment: SystemParam;
+    fn on_begin<'world, 'state>(
+        &self,
+        environment: &mut StaticSystemParam<'world, 'state, Self::Environment>,
+        object: Entity,
+    );
+    fn on_interrupt<'world, 'state>(
+        &self,
+        environment: &mut StaticSystemParam<'world, 'state, Self::Environment>,
+    ) -> bool;
+    fn on_end<'world, 'state>(
+        &self,
+        environment: &mut StaticSystemParam<'world, 'state, Self::Environment>,
+        object: Entity,
+        duration: Option<Duration>,
+    ) -> Option<NamespacedKey>;
+    fn duration(&self) -> Duration;
+}
+
+#[derive(Eq, PartialEq, Clone)]
+pub struct Actions<A: Action> {
+    click: Option<A>,
+    double_click: Option<A>,
+}
+
+impl<A: Action> Default for Actions<A> {
+    fn default() -> Self {
+        Self {
+            click: Default::default(),
+            double_click: Default::default(),
+        }
+    }
+}
+
+impl<A: Action> Actions<A> {
+    pub fn get(&self, trigger: InteractionTrigger) -> Option<&A> {
+        match trigger {
+            InteractionTrigger::Click => self.click.as_ref(),
+            InteractionTrigger::DoubleClick => self.double_click.as_ref(),
+        }
+    }
+    pub fn get_mut(&mut self, trigger: InteractionTrigger) -> Option<&mut A> {
+        match trigger {
+            InteractionTrigger::Click => self.click.as_mut(),
+            InteractionTrigger::DoubleClick => self.double_click.as_mut(),
+        }
+    }
+    pub fn set(&mut self, trigger: InteractionTrigger, action: A) {
+        match trigger {
+            InteractionTrigger::Click => self.click = Some(action),
+            InteractionTrigger::DoubleClick => self.double_click = Some(action),
+        }
+    }
+    pub fn clear(&mut self, trigger: InteractionTrigger) {
+        match trigger {
+            InteractionTrigger::Click => self.click = None,
+            InteractionTrigger::DoubleClick => self.double_click = None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub enum ActionStatus {
+    #[default]
+    Idle,
+    Active {
+        timer: Stopwatch,
+        trigger: InteractionTrigger,
+    },
+}
+
+impl ActionStatus {
+    pub fn idle() -> Self {
+        Self::Idle
+    }
+    pub fn activate(trigger: InteractionTrigger) -> Self {
+        Self::Active {
+            timer: Stopwatch::new(),
+            trigger,
+        }
+    }
+    #[inline]
+    pub fn is_idle(&self) -> bool {
+        matches!(self, Self::Idle)
+    }
+    #[inline]
+    pub fn is_active(&self) -> bool {
+        matches!(self, Self::Active { .. })
+    }
+}
+
+pub trait ActionStatusComponent: Component<Mutability = Mutable> {
+    type Key;
+    fn get_action_status(&self, key: &Self::Key) -> &ActionStatus;
+    fn get_action_status_mut(&mut self, key: &Self::Key) -> &mut ActionStatus;
+}
+
+pub trait ActionsComponent<A: Action>: Component<Mutability = Mutable> {
+    type Key;
+    fn get_actions(&self, key: &Self::Key) -> &Actions<A>;
+    fn get_actions_mut(&mut self, key: &Self::Key) -> &mut Actions<A>;
+}
+
+fn update_action<
+    A: Action<Environment = Env> + Send + Sync + 'static,
+    K: 'static,
+    ASC: ActionStatusComponent<Key = K>,
+    AC: ActionsComponent<A, Key = K>,
+    F: QueryFilter,
+    Env: SystemParam + 'static,
+>(
+    (In(agent_entity), In(actions_key), In(trigger), In(object)): (
+        In<Entity>,
+        In<K>,
+        In<Option<InteractionTrigger>>,
+        In<Entity>,
+    ),
+    mut agent: Query<(&mut ASC, &mut AC), F>,
+    mut environment: StaticSystemParam<Env>,
+    action_reg: Reg<A>,
+) {
+    let (ref mut status, ref mut actions) = agent.get_mut(agent_entity).unwrap();
+    let status = status.get_action_status_mut(&actions_key);
+    let actions = actions.get_actions_mut(&actions_key);
+    //let environment = environment.into_inner();
+    match trigger {
+        Some(active_trigger) => {
+            if status.is_idle() {
+                if let Some(action) = actions.get(active_trigger) {
+                    *status = ActionStatus::activate(active_trigger);
+                    action.on_begin(&mut environment, object);
+                }
+            } else if let ActionStatus::Active {
+                ref timer,
+                trigger: current_trigger,
+            } = *status
+            {
+                if let Some(action) = actions.get_mut(active_trigger) {
+                    let finished = timer.elapsed() >= action.duration();
+                    if finished || active_trigger != current_trigger {
+                        if let Some(new_action) = action
+                            .on_end(
+                                &mut environment,
+                                object,
+                                if finished {
+                                    None
+                                } else {
+                                    Some(timer.elapsed())
+                                },
+                            )
+                            .and_then(|new_action| action_reg.get_cloned(&new_action))
+                        {
+                            *action = new_action;
+                        }
+                        *status = ActionStatus::activate(active_trigger);
+                        action.on_begin(&mut environment, object);
+                    }
+                } else if actions.get(current_trigger).is_none() {
+                    *status = ActionStatus::idle();
+                }
+            }
+        }
+        None => {
+            if let ActionStatus::Active { ref timer, trigger } = *status {
+                if let Some(action) = actions.get_mut(trigger) {
+                    if let Some(new_action) = action
+                        .on_end(
+                            &mut environment,
+                            object,
+                            Some(timer.elapsed()).take_if(|used| action.duration() >= *used),
+                        )
+                        .and_then(|new_action| action_reg.get_cloned(&new_action))
+                    {
+                        *action = new_action;
+                    }
+                }
+                *status = ActionStatus::idle();
+            }
+        }
+    }
+}
+
+#[derive(SystemParam)]
+pub struct EntityInteractionEnvironment<'w, 's> {
+    commands: Commands<'w, 's>,
+    player: Single<'w, 's, (Entity, &'static PlayerInventory, &'static Transform), With<Player>>,
+}
+
+pub type EntityInteractions = Actions<EntityInteractionEnvironment<'static, 'static>>;
+
+#[derive(Clone)]
+#[identify(key)]
+pub struct EntityInteraction {
+    key: NamespacedKey,
+    on_begin: Arc<dyn Fn(&mut EntityInteractionEnvironment, Entity) + Send + Sync>,
+    on_interrupt: Arc<dyn Fn(&mut EntityInteractionEnvironment) -> bool + Send + Sync>,
+    on_end: Arc<
+        dyn Fn(&mut EntityInteractionEnvironment, Entity, Option<Duration>) -> Option<NamespacedKey>
+            + Send
+            + Sync,
+    >,
+    duration: Duration,
+}
+
+impl EntityInteraction {
+    pub fn new(
+        key: NamespacedKey,
+        on_begin: impl Fn(&mut EntityInteractionEnvironment, Entity) + Send + Sync + 'static,
+        on_interrupt: impl Fn(&mut EntityInteractionEnvironment) -> bool + Send + Sync + 'static,
+        on_end: impl Fn(
+            &mut EntityInteractionEnvironment,
+            Entity,
+            Option<Duration>,
+        ) -> Option<NamespacedKey>
+        + Send
+        + Sync
+        + 'static,
+        duration: Duration,
+    ) -> Self {
+        Self {
+            key,
+            on_begin: Arc::new(on_begin),
+            on_interrupt: Arc::new(on_interrupt),
+            on_end: Arc::new(on_end),
+            duration,
+        }
+    }
+}
+
+impl Keyed for EntityInteraction {
+    fn key(&self) -> &NamespacedKey {
+        &self.key
+    }
+}
+
+impl Action for EntityInteraction {
+    type Environment = EntityInteractionEnvironment<'static, 'static>;
+    fn on_begin(&self, environment: &mut StaticSystemParam<Self::Environment>, entity: Entity) {
+        (self.on_begin)(environment, entity)
+    }
+    fn on_interrupt(&self, environment: &mut StaticSystemParam<Self::Environment>) -> bool {
+        (self.on_interrupt)(environment)
+    }
+    fn on_end(
+        &self,
+        environment: &mut StaticSystemParam<Self::Environment>,
+        entity: Entity,
+        duration: Option<Duration>,
+    ) -> Option<NamespacedKey> {
+        (self.on_end)(environment, entity, duration)
+    }
+    fn duration(&self) -> Duration {
+        self.duration
     }
 }
 

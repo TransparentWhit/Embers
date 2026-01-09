@@ -2,13 +2,14 @@ pub mod inv;
 
 use crate::dim::actor::living::player::Player;
 use crate::dim::actor::primed_tnt::primed_tnt;
-use crate::dim::{CollisionLayer, exclude_source};
+use crate::dim::{Action, Actions, CollisionLayer, exclude_source};
+use crate::input::InteractionTrigger;
 use crate::reg::{DynRegMut, DynamicRegistry, Registry, RegistryError, RegistryInitExt};
 use crate::utils::physics::section;
 use crate::utils::{Keyed, NamespacedKey, UntypedCmp, UntypedPartialCmp};
 use anyhow::Error;
 use avian3d::prelude::*;
-use bevy::ecs::system::SystemParam;
+use bevy::ecs::system::{StaticSystemParam, SystemParam};
 use bevy::prelude::*;
 use embers_macros::identify;
 use serde::{Deserialize, Serialize};
@@ -102,25 +103,18 @@ pub struct InitialItemActions {
 }
 
 impl InitialItemActions {
-    pub fn get(&self, slot: ItemActionSlot, trigger: ItemActionTrigger) -> Option<&NamespacedKey> {
+    pub fn get(&self, slot: ItemActionSlot, trigger: InteractionTrigger) -> Option<&NamespacedKey> {
         match (slot, trigger) {
-            (ItemActionSlot::Hands, ItemActionTrigger::Click) => self.hands_click.as_ref(),
-            (ItemActionSlot::Hands, ItemActionTrigger::DoubleClick) => {
+            (ItemActionSlot::Hands, InteractionTrigger::Click) => self.hands_click.as_ref(),
+            (ItemActionSlot::Hands, InteractionTrigger::DoubleClick) => {
                 self.hands_double_click.as_ref()
             }
-            (ItemActionSlot::Armor, ItemActionTrigger::Click) => self.armor_click.as_ref(),
-            (ItemActionSlot::Armor, ItemActionTrigger::DoubleClick) => {
+            (ItemActionSlot::Armor, InteractionTrigger::Click) => self.armor_click.as_ref(),
+            (ItemActionSlot::Armor, InteractionTrigger::DoubleClick) => {
                 self.armor_double_click.as_ref()
             }
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub enum ItemActionTrigger {
-    #[default]
-    Click,
-    DoubleClick,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -158,14 +152,6 @@ pub enum HandActionWield {
     Dual,
 }
 
-#[derive(SystemParam)]
-pub struct ItemActionEnvironment<'w, 's> {
-    commands: Commands<'w, 's>,
-    spatial_query: SpatialQuery<'w, 's>,
-    asset_server: Res<'w, AssetServer>,
-    player: Single<'w, 's, (Entity, &'static Transform), With<Player>>,
-}
-
 pub trait ItemActionTemplate: Send + Sync {
     fn create(&self, key: NamespacedKey, config: Table) -> Result<ItemAction, Error>;
 }
@@ -178,17 +164,52 @@ impl<T: (Fn(NamespacedKey, Table) -> Result<ItemAction, Error>) + Send + Sync> I
     }
 }
 
+#[derive(SystemParam)]
+pub struct ItemActionEnvironment<'w, 's> {
+    commands: Commands<'w, 's>,
+    spatial_query: SpatialQuery<'w, 's>,
+    asset_server: Res<'w, AssetServer>,
+    player: Single<'w, 's, (Entity, &'static Transform), With<Player>>,
+}
+
+pub type ItemActions = Actions<ItemAction>;
+
 #[derive(Clone)]
 #[identify(key)]
 pub struct ItemAction {
     key: NamespacedKey,
-    pub on_begin: Arc<dyn Fn(&mut ItemActionEnvironment) + Send + Sync>,
-    pub on_end: Arc<
-        dyn Fn(&mut ItemActionEnvironment, Option<Duration>) -> Option<NamespacedKey> + Send + Sync,
+    on_begin: Arc<dyn Fn(&mut ItemActionEnvironment, Entity) + Send + Sync>,
+    on_interrupt: Arc<dyn Fn(&mut ItemActionEnvironment) -> bool + Send + Sync>,
+    on_end: Arc<
+        dyn Fn(&mut ItemActionEnvironment, Entity, Option<Duration>) -> Option<NamespacedKey>
+            + Send
+            + Sync,
     >,
-    pub trigger: ItemActionTrigger,
     pub wield: ItemActionWield,
-    pub duration: Duration,
+    duration: Duration,
+}
+
+impl ItemAction {
+    pub fn new(
+        key: NamespacedKey,
+        on_begin: impl Fn(&mut ItemActionEnvironment, Entity) + Send + Sync + 'static,
+        on_interrupt: impl Fn(&mut ItemActionEnvironment) -> bool + Send + Sync + 'static,
+        on_end: impl Fn(&mut ItemActionEnvironment, Entity, Option<Duration>) -> Option<NamespacedKey>
+        + Send
+        + Sync
+        + 'static,
+        wield: ItemActionWield,
+        duration: Duration,
+    ) -> Self {
+        Self {
+            key,
+            on_begin: Arc::new(on_begin),
+            on_interrupt: Arc::new(on_interrupt),
+            on_end: Arc::new(on_end),
+            wield,
+            duration,
+        }
+    }
 }
 
 impl Keyed for ItemAction {
@@ -197,36 +218,24 @@ impl Keyed for ItemAction {
     }
 }
 
-#[derive(Default, Eq, PartialEq, Clone)]
-pub struct SlotItemActions {
-    click: Option<ItemAction>,
-    double_click: Option<ItemAction>,
-}
-
-impl SlotItemActions {
-    pub fn get(&self, trigger: ItemActionTrigger) -> Option<&ItemAction> {
-        match trigger {
-            ItemActionTrigger::Click => self.click.as_ref(),
-            ItemActionTrigger::DoubleClick => self.double_click.as_ref(),
-        }
+impl Action for ItemAction {
+    type Environment = ItemActionEnvironment<'static, 'static>;
+    fn on_begin(&self, environment: &mut StaticSystemParam<Self::Environment>, item: Entity) {
+        (self.on_begin)(environment, item)
     }
-    pub fn get_mut(&mut self, trigger: ItemActionTrigger) -> Option<&mut ItemAction> {
-        match trigger {
-            ItemActionTrigger::Click => self.click.as_mut(),
-            ItemActionTrigger::DoubleClick => self.double_click.as_mut(),
-        }
+    fn on_interrupt(&self, environment: &mut StaticSystemParam<Self::Environment>) -> bool {
+        (self.on_interrupt)(environment)
     }
-    pub fn set(&mut self, trigger: ItemActionTrigger, action: ItemAction) {
-        match trigger {
-            ItemActionTrigger::Click => self.click = Some(action),
-            ItemActionTrigger::DoubleClick => self.double_click = Some(action),
-        }
+    fn on_end(
+        &self,
+        environment: &mut StaticSystemParam<Self::Environment>,
+        item: Entity,
+        duration: Option<Duration>,
+    ) -> Option<NamespacedKey> {
+        (self.on_end)(environment, item, duration)
     }
-    pub fn clear(&mut self, trigger: ItemActionTrigger) {
-        match trigger {
-            ItemActionTrigger::Click => self.click = None,
-            ItemActionTrigger::DoubleClick => self.double_click = None,
-        }
+    fn duration(&self) -> Duration {
+        self.duration
     }
 }
 
@@ -345,16 +354,16 @@ pub(super) fn plugin(app: &mut App) {
                                     NamespacedKey::try_from_with_namespaced(next.as_str(), &key)
                                         .ok()
                                 });
-                                Ok(ItemAction {
-                                    on_begin: Arc::new(|_environment| {}),
-                                    on_end: Arc::new(
-                                        move |ItemActionEnvironment {
+                                Ok(ItemAction::new(
+                                    key,
+                                    |_environment, _item| {},
+                                    |_environment| false,
+                                    move |ItemActionEnvironment {
                                             commands,
                                             spatial_query,
                                             asset_server: _,
                                             player,
-                                        },
-                                              duration| {
+                                        }, item, duration| {
                                             let (player, transform) = **player;
                                             if duration.is_none() {
                                                 for entity in spatial_query.shape_intersections(&collider, transform.translation, transform.rotation, &spatial_query_filter.clone().with_excluded_entities(once(player))) {
@@ -365,12 +374,9 @@ pub(super) fn plugin(app: &mut App) {
                                                 None
                                             }
                                         },
-                                    ),
-                                    trigger: ItemActionTrigger::Click,
-                                    wield: ItemActionWield::Hands(action.wield),
-                                    duration: Duration::from_secs_f32(action.duration_secs),
-                                    key,
-                                })
+                                    ItemActionWield::Hands(action.wield),
+                                    Duration::from_secs_f32(action.duration_secs),
+                                ))
                             }),
                         )?;
                         item_action_templates.register_boxed(
@@ -389,27 +395,27 @@ pub(super) fn plugin(app: &mut App) {
                                     NamespacedKey::try_from_with_namespaced(next.as_str(), &key)
                                         .ok()
                                 });
-                                Ok(ItemAction {
-                                    on_begin: Arc::new(move |ItemActionEnvironment {
-                                            commands,
-                                            spatial_query: _,
-                                            asset_server,
-                                            player,
-                                        }| {
-                                            let (player, transform) = **player;
-                                            commands.spawn((
-                                                primed_tnt(asset_server),
-                                                exclude_source(player),
-                                                *transform,
-                                                LinearVelocity(transform.rotation * -Vec3::Z * velocity),
-                                            ));
-                                        }),
-                                    on_end: Arc::new(move |_environment, _duration| next_action.clone()),
-                                    trigger: ItemActionTrigger::Click,
-                                    wield: ItemActionWield::Hands(action.wield),
-                                    duration: Duration::from_secs_f32(action.timeout_secs),
+                                Ok(ItemAction::new(
                                     key,
-                                })
+                                move |ItemActionEnvironment {
+                                        commands,
+                                        spatial_query: _,
+                                        asset_server,
+                                        player,
+                                    }, _item| {
+                                        let (player, transform) = **player;
+                                        commands.spawn((
+                                            primed_tnt(asset_server),
+                                            exclude_source(player),
+                                            *transform,
+                                            LinearVelocity(transform.rotation * -Vec3::Z * velocity),
+                                        ));
+                                    },
+                                    |_environment| false,
+                                    move |_environment, _item, _duration| next_action.clone(),
+                                    ItemActionWield::Hands(action.wield),
+                                    Duration::from_secs_f32(action.timeout_secs),
+                                ))
                             }),
                         )?;
                         item_action_templates.register_boxed(
@@ -426,16 +432,16 @@ pub(super) fn plugin(app: &mut App) {
                                     NamespacedKey::try_from_with_namespaced(next.as_str(), &key)
                                         .ok()
                                 });
-                                Ok(ItemAction {
-                                    on_begin: Arc::new(|_environment| {}),
-                                    on_end: Arc::new(
-                                        move |ItemActionEnvironment {
+                                Ok(ItemAction::new(
+                                    key,
+                                    |_environment, _item| {},
+                                    |_environment| false,
+                                    move |ItemActionEnvironment {
                                             commands,
                                             spatial_query: _,
                                             asset_server,
                                             player,
-                                        },
-                                              duration| {
+                                        }, _item, duration| {
                                             if duration.is_none() {
                                                 hold_action.clone()
                                             } else {
@@ -443,14 +449,9 @@ pub(super) fn plugin(app: &mut App) {
                                                 None
                                             }
                                         },
-                                    ),
-                                    trigger: ItemActionTrigger::DoubleClick,
-                                    wield: ItemActionWield::Hands(action.wield),
-                                    duration: action
-                                        .hold_threshold_secs
-                                        .map_or(Duration::MAX, Duration::from_secs_f32),
-                                    key,
-                                })
+                                    ItemActionWield::Hands(action.wield),
+                                    action.hold_threshold_secs.map_or(Duration::MAX, Duration::from_secs_f32),
+                                ))
                             }),
                         )?;
                         Ok::<(), RegistryError>(())
