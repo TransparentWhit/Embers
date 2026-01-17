@@ -106,7 +106,7 @@ fn try_stack(
     };
     if world
         .resource::<DynamicRegistry<dyn ItemComponent>>()
-        .iter()
+        .values()
         .any(|item_component| item_component.ne(source_ref, target_ref))
     {
         return ItemStackResult::NotStackable;

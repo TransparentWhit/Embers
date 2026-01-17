@@ -5,7 +5,7 @@ use crate::dim::actor::living::player;
 use crate::dim::actor::living::player::{Player, PlayerInventory};
 use crate::input::InteractionTrigger;
 use crate::pld::PayloadScope;
-use crate::reg::Reg;
+use crate::reg::{Reg, RegistryInitExt};
 use crate::utils::{Keyed, Namespaced, NamespacedKey};
 use avian3d::prelude::PhysicsLayer;
 use avian3d::prelude::*;
@@ -16,6 +16,7 @@ use bevy::ecs::system::{StaticSystemParam, SystemParam};
 use bevy::prelude::*;
 use bevy::time::Stopwatch;
 use bevy_hanabi::{EffectMaterial, ParticleEffect};
+use derive_where::derive_where;
 use embers_macros::identify;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
@@ -178,10 +179,6 @@ pub trait Action: Keyed + Clone {
         environment: &mut StaticSystemParam<'world, 'state, Self::Environment>,
         object: Entity,
     );
-    fn on_interrupt<'world, 'state>(
-        &self,
-        environment: &mut StaticSystemParam<'world, 'state, Self::Environment>,
-    ) -> bool;
     fn on_end<'world, 'state>(
         &self,
         environment: &mut StaticSystemParam<'world, 'state, Self::Environment>,
@@ -192,18 +189,10 @@ pub trait Action: Keyed + Clone {
 }
 
 #[derive(Eq, PartialEq, Clone)]
+#[derive_where(Default)]
 pub struct Actions<A: Action> {
     click: Option<A>,
     double_click: Option<A>,
-}
-
-impl<A: Action> Default for Actions<A> {
-    fn default() -> Self {
-        Self {
-            click: Default::default(),
-            double_click: Default::default(),
-        }
-    }
 }
 
 impl<A: Action> Actions<A> {
@@ -275,6 +264,12 @@ pub trait ActionsComponent<A: Action>: Component<Mutability = Mutable> {
     fn get_actions_mut(&mut self, key: &Self::Key) -> &mut Actions<A>;
 }
 
+#[derive(Message)]
+pub struct ActionInterruptionEvent {
+    pub agent_entity: Entity,
+    pub interruption: NamespacedKey,
+}
+
 fn update_action<
     A: Action<Environment = Env> + Send + Sync + 'static,
     K: 'static,
@@ -283,26 +278,44 @@ fn update_action<
     F: QueryFilter,
     Env: SystemParam + 'static,
 >(
-    (In(agent_entity), In(actions_key), In(trigger), In(object)): (
+    (In(agent_entity), In(actions_key), In(mut trigger), In(object)): (
         In<Entity>,
         In<K>,
         In<Option<InteractionTrigger>>,
-        In<Entity>,
+        In<Option<Entity>>,
     ),
     mut agent: Query<(&mut ASC, &mut AC), F>,
     mut environment: StaticSystemParam<Env>,
     action_reg: Reg<A>,
+    mut interruption_events: MessageReader<ActionInterruptionEvent>,
 ) {
     let (ref mut status, ref mut actions) = agent.get_mut(agent_entity).unwrap();
     let status = status.get_action_status_mut(&actions_key);
     let actions = actions.get_actions_mut(&actions_key);
     //let environment = environment.into_inner();
-    match trigger {
+    trigger.take_if(|active_trigger| {
+        let interrupted = interruption_events.read().any(|event| {
+            event.agent_entity == agent_entity
+                && action_reg.is_tagged(
+                    &event.interruption,
+                    actions
+                        .get(*active_trigger)
+                        .expect("Should not be performing nonexistent action")
+                        .key(),
+                )
+        });
+        interruption_events.clear();
+        interrupted
+    });
+    match trigger.inspect(|t| info!("flag0 {:?} {:?}", status, t)) {
         Some(active_trigger) => {
             if status.is_idle() {
                 if let Some(action) = actions.get(active_trigger) {
                     *status = ActionStatus::activate(active_trigger);
-                    action.on_begin(&mut environment, object);
+                    action.on_begin(
+                        &mut environment,
+                        object.expect("Action should not be performed on a nonexistent object."),
+                    );
                 }
             } else if let ActionStatus::Active {
                 ref timer,
@@ -315,19 +328,25 @@ fn update_action<
                         if let Some(new_action) = action
                             .on_end(
                                 &mut environment,
-                                object,
+                                object.expect(
+                                    "Action should not be performed on a nonexistent object.",
+                                ),
                                 if finished {
                                     None
                                 } else {
                                     Some(timer.elapsed())
                                 },
                             )
-                            .and_then(|new_action| action_reg.get_cloned(&new_action))
+                            .and_then(|new_action| action_reg.get(&new_action).cloned())
                         {
                             *action = new_action;
                         }
                         *status = ActionStatus::activate(active_trigger);
-                        action.on_begin(&mut environment, object);
+                        action.on_begin(
+                            &mut environment,
+                            object
+                                .expect("Action should not be performed on a nonexistent object."),
+                        );
                     }
                 } else if actions.get(current_trigger).is_none() {
                     *status = ActionStatus::idle();
@@ -340,10 +359,11 @@ fn update_action<
                     if let Some(new_action) = action
                         .on_end(
                             &mut environment,
-                            object,
+                            object
+                                .expect("Action should not be performed on a nonexistent object."),
                             Some(timer.elapsed()).take_if(|used| action.duration() >= *used),
                         )
-                        .and_then(|new_action| action_reg.get_cloned(&new_action))
+                        .and_then(|new_action| action_reg.get(&new_action).cloned())
                     {
                         *action = new_action;
                     }
@@ -367,7 +387,6 @@ pub type EntityInteractions = Actions<EntityInteractionEnvironment<'static, 'sta
 pub struct EntityInteraction {
     key: NamespacedKey,
     on_begin: Arc<dyn Fn(&mut EntityInteractionEnvironment, Entity) + Send + Sync>,
-    on_interrupt: Arc<dyn Fn(&mut EntityInteractionEnvironment) -> bool + Send + Sync>,
     on_end: Arc<
         dyn Fn(&mut EntityInteractionEnvironment, Entity, Option<Duration>) -> Option<NamespacedKey>
             + Send
@@ -380,7 +399,6 @@ impl EntityInteraction {
     pub fn new(
         key: NamespacedKey,
         on_begin: impl Fn(&mut EntityInteractionEnvironment, Entity) + Send + Sync + 'static,
-        on_interrupt: impl Fn(&mut EntityInteractionEnvironment) -> bool + Send + Sync + 'static,
         on_end: impl Fn(
             &mut EntityInteractionEnvironment,
             Entity,
@@ -394,7 +412,6 @@ impl EntityInteraction {
         Self {
             key,
             on_begin: Arc::new(on_begin),
-            on_interrupt: Arc::new(on_interrupt),
             on_end: Arc::new(on_end),
             duration,
         }
@@ -411,9 +428,6 @@ impl Action for EntityInteraction {
     type Environment = EntityInteractionEnvironment<'static, 'static>;
     fn on_begin(&self, environment: &mut StaticSystemParam<Self::Environment>, entity: Entity) {
         (self.on_begin)(environment, entity)
-    }
-    fn on_interrupt(&self, environment: &mut StaticSystemParam<Self::Environment>) -> bool {
-        (self.on_interrupt)(environment)
     }
     fn on_end(
         &self,
@@ -465,7 +479,9 @@ pub static LOBBY: LazyLock<Dimension> =
     LazyLock::new(|| Dimension::new(NamespacedKey::new_embers("lobby")));
 
 pub(super) fn plugin(app: &mut App) {
-    app.add_plugins(actor::plugin)
+    app.init_registry::<Particles>()
+        .add_message::<ActionInterruptionEvent>()
+        .add_plugins(actor::plugin)
         .add_plugins(item::plugin)
         .add_plugins(player::plugin);
 }

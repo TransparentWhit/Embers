@@ -81,7 +81,7 @@ fn process_input_item_actions_schedule() -> ScheduleConfigs<ScheduleSystem> {
                   >,
                   hotbar_selection_updated_reader: MessageReader<HotbarSelectionUpdated>,
                   off_hand_swapped_reader: MessageReader<OffHandSwapped>
-            | -> (Entity, EquipmentSlot, Option<InteractionTrigger>, Entity) {
+            | -> (Entity, EquipmentSlot, Option<InteractionTrigger>, Option<Entity>) {
                 let (player, action_status, equipment_actions, inventory, selected_hotbar_slot) =
                     *player;
                 let mut trigger = if double_clicks.double_clicked(*control.read().unwrap()) {
@@ -131,8 +131,7 @@ fn process_input_item_actions_schedule() -> ScheduleConfigs<ScheduleSystem> {
                     equipment_slot,
                     trigger,
                     inventory
-                        .equipment_slot(equipment_slot, selected_hotbar_slot.0)
-                        .expect("Action should not be performed on a nonexistent item."),
+                        .equipment_slot(equipment_slot, selected_hotbar_slot.0),
                 )
             }
                 .pipe(
@@ -484,12 +483,11 @@ pub(in crate::dim) fn plugin(app: &mut App) {
     app.add_message::<OffHandSwapped>();
     app.add_systems(
         Update,
-        process_input_item_actions_schedule()
-            .after(process_input_hotbar)
+        (
+            process_input_item_actions_schedule().after(process_input_hotbar),
+            process_input_hotbar,
+            process_input_movement,
+        )
             .run_if(in_state(GameState::Dimension)),
-    );
-    app.add_systems(
-        Update,
-        (process_input_hotbar, process_input_movement).run_if(in_state(GameState::Dimension)),
     );
 }

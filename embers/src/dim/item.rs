@@ -179,7 +179,6 @@ pub type ItemActions = Actions<ItemAction>;
 pub struct ItemAction {
     key: NamespacedKey,
     on_begin: Arc<dyn Fn(&mut ItemActionEnvironment, Entity) + Send + Sync>,
-    on_interrupt: Arc<dyn Fn(&mut ItemActionEnvironment) -> bool + Send + Sync>,
     on_end: Arc<
         dyn Fn(&mut ItemActionEnvironment, Entity, Option<Duration>) -> Option<NamespacedKey>
             + Send
@@ -193,7 +192,6 @@ impl ItemAction {
     pub fn new(
         key: NamespacedKey,
         on_begin: impl Fn(&mut ItemActionEnvironment, Entity) + Send + Sync + 'static,
-        on_interrupt: impl Fn(&mut ItemActionEnvironment) -> bool + Send + Sync + 'static,
         on_end: impl Fn(&mut ItemActionEnvironment, Entity, Option<Duration>) -> Option<NamespacedKey>
         + Send
         + Sync
@@ -204,7 +202,6 @@ impl ItemAction {
         Self {
             key,
             on_begin: Arc::new(on_begin),
-            on_interrupt: Arc::new(on_interrupt),
             on_end: Arc::new(on_end),
             wield,
             duration,
@@ -222,9 +219,6 @@ impl Action for ItemAction {
     type Environment = ItemActionEnvironment<'static, 'static>;
     fn on_begin(&self, environment: &mut StaticSystemParam<Self::Environment>, item: Entity) {
         (self.on_begin)(environment, item)
-    }
-    fn on_interrupt(&self, environment: &mut StaticSystemParam<Self::Environment>) -> bool {
-        (self.on_interrupt)(environment)
     }
     fn on_end(
         &self,
@@ -272,7 +266,7 @@ impl DynamicRegistry<dyn ItemComponent> {
     pub fn register_default<C: Component + for<'de> Deserialize<'de> + Eq>(
         &mut self,
         key: NamespacedKey,
-    ) -> Result<(), RegistryError> {
+    ) -> Result<NamespacedKey, RegistryError> {
         struct DefaultItemComponent<C: Component + for<'de> Deserialize<'de> + Eq>(
             NamespacedKey,
             PhantomData<C>,
@@ -299,7 +293,7 @@ impl DynamicRegistry<dyn ItemComponent> {
         }
         impl<C: Component + for<'de> Deserialize<'de> + Eq> ItemComponent for DefaultItemComponent<C> {
             fn reset_registry(&self, world: &mut World) {
-                world.insert_resource(Registry::<C>::new());
+                world.resource_mut::<Registry<C>>().clear();
             }
             fn register_prototype(&self, world: &mut World, item: NamespacedKey, value: Value) {
                 world
@@ -357,7 +351,6 @@ pub(super) fn plugin(app: &mut App) {
                                 Ok(ItemAction::new(
                                     key,
                                     |_environment, _item| {},
-                                    |_environment| false,
                                     move |ItemActionEnvironment {
                                             commands,
                                             spatial_query,
@@ -403,6 +396,7 @@ pub(super) fn plugin(app: &mut App) {
                                         asset_server,
                                         player,
                                     }, _item| {
+                                        info!("flag");
                                         let (player, transform) = **player;
                                         commands.spawn((
                                             primed_tnt(asset_server),
@@ -411,7 +405,6 @@ pub(super) fn plugin(app: &mut App) {
                                             LinearVelocity(transform.rotation * -Vec3::Z * velocity),
                                         ));
                                     },
-                                    |_environment| false,
                                     move |_environment, _item, _duration| next_action.clone(),
                                     ItemActionWield::Hands(action.wield),
                                     Duration::from_secs_f32(action.timeout_secs),
@@ -435,7 +428,6 @@ pub(super) fn plugin(app: &mut App) {
                                 Ok(ItemAction::new(
                                     key,
                                     |_environment, _item| {},
-                                    |_environment| false,
                                     move |ItemActionEnvironment {
                                             commands,
                                             spatial_query: _,

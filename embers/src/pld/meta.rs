@@ -8,10 +8,6 @@ use bevy::asset::io::Reader;
 use bevy::asset::{AssetLoader, AssetServer, LoadContext};
 use bevy::ecs::system::{SystemId, SystemState};
 use bevy::prelude::*;
-use bevy_hanabi::{
-    Attribute, EffectAsset, EffectMaterial, Module, ParticleEffect, SetAttributeModifier,
-    SpawnerSettings,
-};
 use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -67,11 +63,11 @@ static PARTICLE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 
 #[derive(Asset, Debug, Deserialize, TypePath)]
 struct ParticleMeta {
-    max_particles: u32,
+    /*max_particles: u32,
     spawn_count: f32,
     spawn_duration_secs: f32,
     spawn_period_secs: f32,
-    spawn_cycles: u32,
+    spawn_cycles: u32,*/
 }
 
 struct TextureAtlasMetadataLoader;
@@ -194,7 +190,7 @@ pub fn reload_metadata(
         }
         info!("Found {} {}(s).", metadata.len(), r#type);
     }
-    *attribute_bases = Registry::new();
+    attribute_bases.clear();
     process_meta(
         &asset_server,
         &actor_bases,
@@ -209,20 +205,22 @@ pub fn reload_metadata(
                 .expect("Failed to register attribute bases");
         },
     );
-    *item_actions = Registry::new();
+    item_actions.clear();
     process_meta(
         &asset_server,
         &item_action_metas,
         &ITEM_ACTION_PATTERN,
         "item action",
         &mut |key, action| match item_action_templates.get(&action.template) {
-            Some(template) => item_actions
-                .register_keyed(
-                    template
-                        .create(key, action.config.clone())
-                        .expect("Failed to apply item action template"),
-                )
-                .expect("Failed to register item action"),
+            Some(template) => {
+                item_actions
+                    .register_keyed(
+                        template
+                            .create(key, action.config.clone())
+                            .expect("Failed to apply item action template"),
+                    )
+                    .expect("Failed to register item action");
+            }
             None => error!("Unknown item action template: {}", action.template),
         },
     );
@@ -245,7 +243,7 @@ pub fn reload_metadata(
             }
         },
     );
-    process_meta(
+    /*process_meta(
         &asset_server,
         &particle_metas,
         &PARTICLE_PATTERN,
@@ -278,9 +276,9 @@ pub fn reload_metadata(
                 )
                 .expect("Failed to register particle");
         },
-    );
+    );*/
     world.resource_scope::<DynamicRegistry<dyn ItemComponent>, ()>(|world, item_components| {
-        for item_component in item_components.iter() {
+        for item_component in item_components.values() {
             item_component.reset_registry(world);
         }
         for (item, item_component, value) in item_prototype_components {

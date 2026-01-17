@@ -55,6 +55,12 @@ pub trait Keyed {
     fn key(&self) -> &NamespacedKey;
 }
 
+impl<T: Keyed + ?Sized> Keyed for Box<T> {
+    fn key(&self) -> &NamespacedKey {
+        self.as_ref().key()
+    }
+}
+
 impl<T> Keyed for (NamespacedKey, T) {
     fn key(&self) -> &NamespacedKey {
         &self.0
