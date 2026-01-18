@@ -1,6 +1,6 @@
 use crate::dim::actor::item_actor::ItemActor;
 use crate::dim::item::{ItemComponent, ItemStack, MaxStackSize, StackCount};
-use crate::reg::{DynamicRegistry, OrRegistry, Registry};
+use crate::reg::{BoxedRegistry, OrRegistry, Registry};
 use crate::utils::Marker;
 use bevy::prelude::*;
 use std::any::type_name;
@@ -105,7 +105,7 @@ fn try_stack(
         None => return ItemStackResult::NotStackable,
     };
     if world
-        .resource::<DynamicRegistry<dyn ItemComponent>>()
+        .resource::<BoxedRegistry<dyn ItemComponent>>()
         .values()
         .any(|item_component| item_component.ne(source_ref, target_ref))
     {

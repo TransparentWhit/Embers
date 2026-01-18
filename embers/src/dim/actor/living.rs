@@ -6,7 +6,7 @@ pub mod player;
 use super::super::PhysicsPreset;
 use super::actor;
 use crate::dim::actor::living::attributes::AttributeInstance;
-use crate::reg::{RegistryAccess, RegistryInitExt};
+use crate::reg::{Registry, RegistryInitExt};
 use crate::utils::NamespacedKey;
 use bevy::prelude::*;
 use bevy_tnua::prelude::*;
@@ -26,10 +26,7 @@ impl AttributeBase {
     }
 }
 
-pub fn living_actor(
-    key: &NamespacedKey,
-    attribute_bases: impl RegistryAccess<Item = AttributeBase>,
-) -> impl Bundle {
+pub fn living_actor(key: &NamespacedKey, attribute_bases: &Registry<AttributeBase>) -> impl Bundle {
     let attributes: HashMap<NamespacedKey, AttributeInstance> = attribute_bases
         .get(key)
         .expect("Attribute base not found")

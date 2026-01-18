@@ -1,6 +1,6 @@
 use crate::dim::LOBBY;
 use crate::dim::actor::living::{AttributeBase, living_actor};
-use crate::reg::RegistryAccess;
+use crate::reg::Registry;
 use crate::utils::NamespacedKey;
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -10,10 +10,7 @@ pub static KEY: LazyLock<NamespacedKey> = LazyLock::new(|| NamespacedKey::new_em
 
 static MODEL_KEY: LazyLock<NamespacedKey> = LazyLock::new(|| NamespacedKey::new_embers("dummy"));
 
-pub fn dummy(
-    asset_server: &AssetServer,
-    attribute_bases: impl RegistryAccess<Item = AttributeBase>,
-) -> impl Bundle {
+pub fn dummy(asset_server: &AssetServer, attribute_bases: &Registry<AttributeBase>) -> impl Bundle {
     (
         living_actor(&KEY, attribute_bases),
         Collider::cuboid(1., 3., 1.),

@@ -10,7 +10,7 @@ use crate::dim::item::{
 use crate::dim::item::{InitialItemActions, ItemActionSlot};
 use crate::dim::{ActionStatus, ActionStatusComponent, Actions, ActionsComponent, update_action};
 use crate::input::{DoubleClicks, InputButton, InteractionTrigger, just_pressed, pressed};
-use crate::reg::{OrRegistry, Reg, RegistryAccess};
+use crate::reg::{OrRegistry, Reg, Registry};
 use crate::ui::dim::PlayerCamera;
 use crate::utils::{Keyed, NamespacedKey};
 use avian3d::prelude::*;
@@ -466,7 +466,7 @@ impl PlayerEquipmentActions {
     }
 }
 
-pub fn player(attribute_bases: impl RegistryAccess<Item = AttributeBase>) -> impl Bundle {
+pub fn player(attribute_bases: &Registry<AttributeBase>) -> impl Bundle {
     (
         living_actor(&KEY, attribute_bases),
         Collider::cylinder(0.5, 1.7),

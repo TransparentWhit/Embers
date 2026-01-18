@@ -4,7 +4,7 @@ use crate::dim::actor::living::player::Player;
 use crate::dim::actor::primed_tnt::primed_tnt;
 use crate::dim::{Action, Actions, CollisionLayer, exclude_source};
 use crate::input::InteractionTrigger;
-use crate::reg::{DynRegMut, DynamicRegistry, Registry, RegistryError, RegistryInitExt};
+use crate::reg::{BoxedRegMut, BoxedRegistry, Registry, RegistryError, RegistryInitExt};
 use crate::utils::physics::section;
 use crate::utils::{Keyed, NamespacedKey, UntypedCmp, UntypedPartialCmp};
 use anyhow::Error;
@@ -262,7 +262,7 @@ pub trait ItemComponent: Keyed + for<'world> UntypedCmp<EntityRef<'world>> + Sen
     fn register_prototype(&self, world: &mut World, item: NamespacedKey, value: Value);
 }
 
-impl DynamicRegistry<dyn ItemComponent> {
+impl BoxedRegistry<dyn ItemComponent> {
     pub fn register_default<C: Component + for<'de> Deserialize<'de> + Eq>(
         &mut self,
         key: NamespacedKey,
@@ -302,7 +302,7 @@ impl DynamicRegistry<dyn ItemComponent> {
                     .expect("Failed to register item component prototype value");
             }
         }
-        self.register_boxed_keyed(Box::new(DefaultItemComponent(key, PhantomData::<C>)))
+        self.register_keyed(Box::new(DefaultItemComponent(key, PhantomData::<C>)))
     }
 }
 
@@ -310,17 +310,17 @@ pub(super) fn plugin(app: &mut App) {
     app.init_registry::<Enchantments>()
         .init_registry::<InitialItemActions>()
         .init_registry::<ItemAction>()
-        .init_dynamic_registry::<dyn ItemActionTemplate>()
+        .init_boxed_registry::<dyn ItemActionTemplate>()
         .init_registry::<MaxStackSize>()
         .init_registry::<RangedAmmo>()
         .init_registry::<Weight>()
-        .init_dynamic_registry::<dyn ItemComponent>()
+        .init_boxed_registry::<dyn ItemComponent>()
         .add_systems(
             PreStartup,
             (
-                |mut item_action_templates: DynRegMut<dyn ItemActionTemplate>| {
+                |mut item_action_templates: BoxedRegMut<dyn ItemActionTemplate>| {
                     (|| {
-                        item_action_templates.register_boxed(
+                        item_action_templates.register(
                             NamespacedKey::new_embers("melee"),
                             Box::new(|key: NamespacedKey, config: Table| {
                                 #[derive(Deserialize)]
@@ -372,7 +372,7 @@ pub(super) fn plugin(app: &mut App) {
                                 ))
                             }),
                         )?;
-                        item_action_templates.register_boxed(
+                        item_action_templates.register(
                             NamespacedKey::new_embers("throw"),
                             Box::new(|key, config| {
                                 #[derive(Deserialize)]
@@ -411,7 +411,7 @@ pub(super) fn plugin(app: &mut App) {
                                 ))
                             }),
                         )?;
-                        item_action_templates.register_boxed(
+                        item_action_templates.register(
                             NamespacedKey::new_embers("charged_throw"),
                             Box::new(|key: NamespacedKey, config: Table| {
                                 #[derive(Deserialize)]
@@ -450,7 +450,7 @@ pub(super) fn plugin(app: &mut App) {
                     })()
                     .expect("Failed to register item action templates");
                 },
-                |mut item_components: DynRegMut<dyn ItemComponent>| {
+                |mut item_components: BoxedRegMut<dyn ItemComponent>| {
                     (|| {
                         item_components.register_default::<RangedAmmo>(
                             NamespacedKey::new_embers("ranged_ammo"),

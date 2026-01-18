@@ -5,26 +5,18 @@ use std::collections::{HashMap, HashSet};
 use std::iter::{Empty, Map, empty, once};
 use std::marker::PhantomData;
 use std::mem::take;
-use std::ops::{Deref, Index};
+use std::ops::Index;
 use thiserror::Error;
 
 pub trait OrRegistry {
-    type Item;
-    fn or_registry(
-        self,
-        registry: impl RegistryAccess<Item = Self::Item>,
-        key: &NamespacedKey,
-    ) -> Self;
+    type Item: Send + Sync;
+    fn or_registry(self, registry: &Registry<Self::Item>, key: &NamespacedKey) -> Self;
 }
 
-impl<T: Clone> OrRegistry for Option<T> {
+impl<T: Clone + Send + Sync> OrRegistry for Option<T> {
     type Item = T;
     #[inline]
-    fn or_registry(
-        self,
-        registry: impl RegistryAccess<Item = Self::Item>,
-        key: &NamespacedKey,
-    ) -> Self {
+    fn or_registry(self, registry: &Registry<Self::Item>, key: &NamespacedKey) -> Self {
         match &self {
             Some(..) => self,
             None => registry.get(key).cloned(),
@@ -32,14 +24,10 @@ impl<T: Clone> OrRegistry for Option<T> {
     }
 }
 
-impl<T: Clone, E> OrRegistry for Result<T, E> {
+impl<T: Clone + Send + Sync, E> OrRegistry for Result<T, E> {
     type Item = T;
     #[inline]
-    fn or_registry(
-        self,
-        registry: impl RegistryAccess<Item = Self::Item>,
-        key: &NamespacedKey,
-    ) -> Self {
+    fn or_registry(self, registry: &Registry<Self::Item>, key: &NamespacedKey) -> Self {
         match self {
             Ok(val) => Ok(val),
             Err(err) => registry.get(key).cloned().ok_or(err),
@@ -48,20 +36,17 @@ impl<T: Clone, E> OrRegistry for Result<T, E> {
 }
 
 pub trait UnwrapOrRegistry {
-    type Item;
-    fn unwrap_or_registry(
-        self,
-        registry: impl RegistryAccess<Item = Self::Item>,
-        key: &NamespacedKey,
-    ) -> Self::Item;
+    type Item: Send + Sync;
+    fn unwrap_or_registry(self, registry: &Registry<Self::Item>, key: &NamespacedKey)
+    -> Self::Item;
 }
 
-impl<T: Clone> UnwrapOrRegistry for Option<T> {
+impl<T: Clone + Send + Sync> UnwrapOrRegistry for Option<T> {
     type Item = T;
     #[inline]
     fn unwrap_or_registry(
         self,
-        registry: impl RegistryAccess<Item = Self::Item>,
+        registry: &Registry<Self::Item>,
         key: &NamespacedKey,
     ) -> Self::Item {
         match self {
@@ -71,12 +56,12 @@ impl<T: Clone> UnwrapOrRegistry for Option<T> {
     }
 }
 
-impl<T: Clone, E> UnwrapOrRegistry for Result<T, E> {
+impl<T: Clone + Send + Sync, E> UnwrapOrRegistry for Result<T, E> {
     type Item = T;
     #[inline]
     fn unwrap_or_registry(
         self,
-        registry: impl RegistryAccess<Item = Self::Item>,
+        registry: &Registry<Self::Item>,
         key: &NamespacedKey,
     ) -> Self::Item {
         match self {
@@ -86,44 +71,25 @@ impl<T: Clone, E> UnwrapOrRegistry for Result<T, E> {
     }
 }
 
-pub trait RegistryAccess: Index<ValueIndex<Self::Item>, Output = Self::Item> {
-    type Item: ?Sized;
-    fn is_mutating(&self) -> bool;
-    fn is_frozen(&self) -> bool;
-    fn get_index(&self, key: &NamespacedKey) -> Option<ValueIndex<Self::Item>>;
-    fn get_tag_index(&self, tag: &NamespacedKey) -> Option<TagIndex<Self::Item>>;
-    fn index(&self, value_index: ValueIndex<Self::Item>) -> Option<&Self::Item>;
-    fn is_tagged_indexed(&self, tag_index: TagIndex<Self::Item>, key: &NamespacedKey) -> bool;
-    fn index_tagged(
-        &self,
-        tag_index: TagIndex<Self::Item>,
-    ) -> impl Iterator<Item = &Self::Item> + ExactSizeIterator;
-    fn contains(&self, key: &NamespacedKey) -> bool;
-    fn contains_tag(&self, tag: &NamespacedKey) -> bool;
-    fn is_tagged(&self, tag: &NamespacedKey, key: &NamespacedKey) -> bool;
-    fn get(&self, key: &NamespacedKey) -> Option<&Self::Item>;
-    fn get_tagged(
-        &self,
-        tag: &NamespacedKey,
-    ) -> impl Iterator<Item = &Self::Item> + ExactSizeIterator;
-    fn values(&self) -> impl Iterator<Item = &Self::Item> + ExactSizeIterator;
-}
-
-pub struct RegistryCreateEvent<T: ?Sized> {
+pub struct RegistryCreateEvent<T> {
     _marker: PhantomData<T>,
 }
 
-pub struct RegistryFreezeEvent<T: ?Sized> {
+pub type BoxedRegistryCreateEvent<T> = RegistryCreateEvent<Box<T>>;
+
+pub struct RegistryFreezeEvent<T> {
     _marker: PhantomData<T>,
 }
+
+pub type BoxedRegistryFreezeEvent<T> = RegistryFreezeEvent<Box<T>>;
 
 #[derive(Message)]
-enum RegistryEvent<T: ?Sized> {
+pub enum RegistryEvent<T> {
     Creation(RegistryCreateEvent<T>),
     Freezing(RegistryFreezeEvent<T>),
 }
 
-impl<T: ?Sized> RegistryEvent<T> {
+impl<T> RegistryEvent<T> {
     fn new_creation() -> Self {
         Self::Creation(RegistryCreateEvent {
             _marker: PhantomData,
@@ -136,6 +102,8 @@ impl<T: ?Sized> RegistryEvent<T> {
     }
 }
 
+pub type BoxedRegistryEvent<T> = RegistryEvent<Box<T>>;
+
 #[derive(Debug, Error)]
 pub enum RegistryError {
     #[error("A value with such a key already exists: {key}")]
@@ -146,21 +114,40 @@ pub enum RegistryError {
     RegistryFrozen {},
 }
 
+/// Represents a single item in a registry tag, which can refer to either
+/// a [value](Self::Value) or [another tag](Self::Tag).
+///
+/// # Note
+/// - Circular references will result in a panic.
+/// - Tags are resolved when the registry freezes, not when the tags are registered. This means:
+///   - Tags are only functional in a [frozen](Registry::is_frozen) registry.
+///   - Tags can refer to items that are not yet present at the time of registration.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum RegistryTagItem {
     Value(NamespacedKey),
     Tag(NamespacedKey),
 }
 
+/// A type-safe index into a frozen registry's values, providing efficient access to regsitry values.
+///
+/// # Creation
+/// [Registry::get_index]
+///
+/// # Safety
+/// - **Registry Generation**: Indices are only valid in the same registry generation it was retrieved from.
+///   When debug assertions are enabled, the index tracks registry generation and panics if the generation doesn't match that of the registry's.
+/// - **Registry State**: Indices are only valid when the registry is frozen.
+///
+/// See also: [TagIndex]
 #[derive(Copy, Clone, Eq, Hash, PartialEq)]
-pub struct ValueIndex<M: ?Sized> {
+pub struct ValueIndex<T> {
     index: usize,
     #[cfg(debug_assertions)]
     generation: u32,
-    _marker: PhantomData<M>,
+    _marker: PhantomData<T>,
 }
 
-impl<M: ?Sized> ValueIndex<M> {
+impl<T> ValueIndex<T> {
     fn new(index: usize, #[cfg(debug_assertions)] generation: u32) -> Self {
         Self {
             index,
@@ -171,15 +158,28 @@ impl<M: ?Sized> ValueIndex<M> {
     }
 }
 
+pub type BoxedValueIndex<T> = ValueIndex<Box<T>>;
+
+/// A type-safe index into a frozen registry's tags, providing efficient access to tag membership information.
+///
+/// # Creation
+/// [Registry::get_tag_index]
+///
+/// # Safety
+/// - **Registry Generation**: Indices are only valid in the same registry generation it was retrieved from.
+///   When debug assertions are enabled, the index tracks registry generation and panics if the generation doesn't match that of the registry's.
+/// - **Registry State**: Indices are only valid when the registry is frozen.
+///
+/// See also: [ValueIndex]
 #[derive(Copy, Clone, Eq, Hash, PartialEq)]
-pub struct TagIndex<M: ?Sized> {
+pub struct TagIndex<T> {
     index: usize,
     #[cfg(debug_assertions)]
     generation: u32,
-    _marker: PhantomData<M>,
+    _marker: PhantomData<T>,
 }
 
-impl<M: ?Sized> TagIndex<M> {
+impl<T> TagIndex<T> {
     fn new(index: usize, #[cfg(debug_assertions)] generation: u32) -> Self {
         Self {
             index,
@@ -190,13 +190,14 @@ impl<M: ?Sized> TagIndex<M> {
     }
 }
 
-enum RegistryInner<T: 'static, M: ?Sized> {
+pub type BoxedTagIndex<T> = TagIndex<Box<T>>;
+
+enum RegistryInner<T: 'static> {
     Mutating {
         values: HashMap<NamespacedKey, T>,
         tags: HashMap<NamespacedKey, HashSet<RegistryTagItem>>,
         #[cfg(debug_assertions)]
         generation: u32,
-        _marker: PhantomData<M>,
     },
     Frozen {
         indices: HashMap<NamespacedKey, usize>,
@@ -208,16 +209,16 @@ enum RegistryInner<T: 'static, M: ?Sized> {
     },
 }
 
-impl<T: 'static, M: ?Sized> RegistryInner<T, M> {
+impl<T: 'static> RegistryInner<T> {
     fn new(#[cfg(debug_assertions)] generation: u32) -> Self {
         Self::Mutating {
             values: HashMap::new(),
             tags: HashMap::new(),
             #[cfg(debug_assertions)]
             generation,
-            _marker: PhantomData,
         }
     }
+    #[cfg(debug_assertions)]
     fn generation(&self) -> u32 {
         match self {
             Self::Mutating { generation, .. } => *generation,
@@ -232,11 +233,12 @@ impl<T: 'static, M: ?Sized> RegistryInner<T, M> {
     fn is_frozen(&self) -> bool {
         matches!(self, Self::Frozen { .. })
     }
-    fn get_index(&self, key: &NamespacedKey) -> Option<ValueIndex<M>> {
+    fn get_index(&self, key: &NamespacedKey) -> Option<ValueIndex<T>> {
         match self {
             Self::Mutating { .. } => None,
             Self::Frozen {
                 indices,
+                #[cfg(debug_assertions)]
                 generation,
                 ..
             } => Some(ValueIndex::new(
@@ -246,11 +248,12 @@ impl<T: 'static, M: ?Sized> RegistryInner<T, M> {
             )),
         }
     }
-    fn get_tag_index(&self, tag: &NamespacedKey) -> Option<TagIndex<M>> {
+    fn get_tag_index(&self, tag: &NamespacedKey) -> Option<TagIndex<T>> {
         match self {
             Self::Mutating { .. } => None,
             Self::Frozen {
                 tag_indices,
+                #[cfg(debug_assertions)]
                 generation,
                 ..
             } => Some(TagIndex::new(
@@ -260,7 +263,7 @@ impl<T: 'static, M: ?Sized> RegistryInner<T, M> {
             )),
         }
     }
-    fn index(&self, value_index: ValueIndex<M>) -> Option<&T> {
+    fn index(&self, value_index: ValueIndex<T>) -> Option<&T> {
         match self {
             Self::Mutating { .. } => None,
             Self::Frozen {
@@ -280,7 +283,7 @@ impl<T: 'static, M: ?Sized> RegistryInner<T, M> {
             }
         }
     }
-    fn is_tagged_indexed(&self, tag_index: TagIndex<M>, key: &NamespacedKey) -> bool {
+    fn is_tagged_indexed(&self, tag_index: TagIndex<T>, key: &NamespacedKey) -> bool {
         match self {
             Self::Mutating { .. } => false,
             Self::Frozen {
@@ -303,7 +306,7 @@ impl<T: 'static, M: ?Sized> RegistryInner<T, M> {
             }
         }
     }
-    fn index_tagged(&self, tag_index: TagIndex<M>) -> impl Iterator<Item = &T> + ExactSizeIterator {
+    fn index_tagged(&self, tag_index: TagIndex<T>) -> impl Iterator<Item = &T> + ExactSizeIterator {
         enum RegistryIndexTaggedIter<'item, T: 'item, L: FnMut(&'item usize) -> &'item T> {
             Empty(Empty<&'item T>),
             MapHashSetIter(Map<std::collections::hash_set::Iter<'item, usize>, L>),
@@ -505,14 +508,14 @@ impl<T: 'static, M: ?Sized> RegistryInner<T, M> {
     fn register_tag(
         &mut self,
         tag: NamespacedKey,
-        items: impl Iterator<Item = RegistryTagItem>,
+        items: impl IntoIterator<Item = RegistryTagItem>,
     ) -> Result<NamespacedKey, RegistryError> {
         match self {
             Self::Mutating { tags, .. } => {
                 if tags.contains_key(&tag) {
                     return Err(RegistryError::TagAlreadyExists { tag });
                 }
-                tags.insert(tag.clone(), items.collect());
+                tags.insert(tag.clone(), items.into_iter().collect());
                 Ok(tag)
             }
             Self::Frozen { .. } => Err(RegistryError::RegistryFrozen {}),
@@ -621,42 +624,116 @@ pub type Reg<'world, T> = Res<'world, Registry<T>>;
 
 pub type RegMut<'world, T> = ResMut<'world, Registry<T>>;
 
+/// The `Registry` is a Bevy [resource](Resource) that provides storage and organization of values.
+/// It supports [hierarchical tagging](Self::register_tag) and efficient [indexing](Self::get_index).
+///
+/// # Creation
+/// Use [`(Sub)App::init_registry`](RegistryInitExt::init_registry) to create a registry for a type.
+///
+/// Use [`Registry::clear`](Self::clear) to reset a registry.
+///
+/// # Note
+/// The registry automatically [freezes](Self::is_frozen) one Bevy update cycle after it is created or reset.
+/// You can subscribe to [creation events](RegistryEvent::Creation) and [freezing events](RegistryEvent::Freezing) for these state changes.
 #[derive(Resource)]
 pub struct Registry<T: Send + Sync + 'static> {
-    inner: RegistryInner<T, T>,
+    inner: RegistryInner<T>,
     events: Vec<RegistryEvent<T>>,
 }
 
 impl<T: Send + Sync + 'static> Registry<T> {
     fn new() -> Self {
         Self {
-            inner: RegistryInner::new(0),
+            inner: RegistryInner::new(
+                #[cfg(debug_assertions)]
+                0,
+            ),
             events: vec![RegistryEvent::new_creation()],
         }
     }
+    /// Completely clears the registry, resetting it to a new mutating state.
+    ///
+    /// Emits a new [RegistryEvent::Creation].
     pub fn clear(&mut self) {
-        self.inner = RegistryInner::new(self.inner.generation() + 1);
+        self.inner = RegistryInner::new(
+            #[cfg(debug_assertions)]
+            {
+                self.inner.generation() + 1
+            },
+        );
         self.events.clear();
         self.events.push(RegistryEvent::new_creation());
     }
     delegate! {
         to self.inner {
+            /// Returns whether the registry is mutating.
+            ///
+            /// A mutating registry:
+            /// - Accepts new values and tags
+            /// - Is not indexed
+            /// - Has not resolved tags
+            ///
+            /// See also: [is_frozen](Self::is_frozen)
             pub fn is_mutating(&self) -> bool;
+            /// Returns whether the registry is mutating.
+            ///
+            /// A mutating registry:
+            /// - Does not accept new values or tags
+            /// - Is indexed
+            /// - Has resolved tags
+            ///
+            /// See also: [is_mutating](Self::is_mutating)
             pub fn is_frozen(&self) -> bool;
+            /// Gets the [ValueIndex] for the given key, if it exists.
+            /// Always returns `None` if the registry is not [frozen](Self::is_frozen).
             pub fn get_index(&self, key: &NamespacedKey) -> Option<ValueIndex<T>>;
+            /// Gets the [TagIndex] for the given tag, if it exists.
+            /// Always returns `None` if the registry is not [frozen](Self::is_frozen).
             pub fn get_tag_index(&self, tag: &NamespacedKey) -> Option<TagIndex<T>>;
-            pub fn index(&self, key: ValueIndex<T>) -> Option<&T>;
+            /// Retrieves a value by index.
+            /// Always returns `None` if the registry is not [frozen](Self::is_frozen).
+            ///
+            /// # Panics
+            /// When debug assertions are enabled, panics if the index generation doesn't match the registry generation.
+            pub fn index(&self, value_index: ValueIndex<T>) -> Option<&T>;
+            /// Checks whether a value (by key) is tagged with a given tag, by index.
+            /// Always returns `false` if the registry is not [frozen](Self::is_frozen).
+            ///
+            /// # Panics
+            /// When debug assertions are enabled, panics if the index generation doesn't match the registry generation.
             pub fn is_tagged_indexed(&self, tag_index: TagIndex<T>, key: &NamespacedKey) -> bool;
-            pub fn index_tagged(&self, key: TagIndex<T>) -> impl Iterator<Item = &T> + ExactSizeIterator;
+            /// Returns an iterator over all values tagged with the given tag, by index.
+            /// Always returns an empty iterator if the registry is not [frozen](Self::is_frozen).
+            ///
+            /// # Panics
+            /// When debug assertions are enabled, panics if the index generation doesn't match the registry generation.
+            pub fn index_tagged(&self, tag_index: TagIndex<T>) -> impl Iterator<Item = &T> + ExactSizeIterator;
+            /// Checks whether a value with the given key exists.
             pub fn contains(&self, key: &NamespacedKey) -> bool;
+            /// Checks whether a tag with the given key exists.
             pub fn contains_tag(&self, tag: &NamespacedKey) -> bool;
+            /// Checks whether a tag with the given key exists.
+            /// Always returns `false` if the registry is not [frozen](Self::is_frozen).
             pub fn is_tagged(&self, tag: &NamespacedKey, key: &NamespacedKey) -> bool;
+            /// Retrieves a value by key.
             pub fn get(&self, key: &NamespacedKey) -> Option<&T>;
+            /// Returns an iterator over all values tagged with the given tag, by key.
+            /// Always returns an empty iterator if the registry is not [frozen](Self::is_frozen).
             pub fn get_tagged(&self, tag: &NamespacedKey) -> impl Iterator<Item = &T> + ExactSizeIterator;
+            /// Returns an iterator over all values in the registry.
             pub fn values(&self) -> impl Iterator<Item = &T> + ExactSizeIterator;
+            /// Registers a new value with the given key.
+            ///
+            /// Fails if a value with the same key already exists, or the registry is [frozen](Self::is_frozen).
             pub fn register(&mut self, key: NamespacedKey, value: T) -> Result<NamespacedKey, RegistryError>;
+            /// Registers a new [keyed](Keyed) value.
+            ///
+            /// Fails if a value with the same key already exists, or the registry is [frozen](Self::is_frozen).
             pub fn register_keyed(&mut self, value: T) -> Result<NamespacedKey, RegistryError> where T: Keyed;
-            pub fn register_tag(&mut self, tag: NamespacedKey, items: impl Iterator<Item = RegistryTagItem>) -> Result<NamespacedKey, RegistryError>;
+            /// Registers a tag with the given key.
+            ///
+            /// Fails if a tag with the same key already exists, or the registry is [frozen](Self::is_frozen).
+            pub fn register_tag(&mut self, tag: NamespacedKey, items: impl IntoIterator<Item = RegistryTagItem>) -> Result<NamespacedKey, RegistryError>;
         }
     }
 }
@@ -671,155 +748,11 @@ impl<T: Send + Sync + 'static> Index<ValueIndex<T>> for Registry<T> {
     }
 }
 
-macro_rules! impl_registry_access {
-    ($type_: ty, $get_registry: ident) => {
-        impl<T: Send + Sync + 'static> Index<ValueIndex<T>> for $type_ {
-            type Output = T;
-            delegate! {
-                to self.$get_registry() {
-                    #[unwrap]
-                    fn index(&self, value_index: ValueIndex<T>) -> &Self::Output;
-                }
-            }
-        }
-        impl<T: Send + Sync + 'static> RegistryAccess for $type_ {
-            type Item = T;
-            delegate! {
-                to self.$get_registry() {
-                    fn is_mutating(&self) -> bool;
-                    fn is_frozen(&self) -> bool;
-                    fn get_index(&self, key: &NamespacedKey) -> Option<ValueIndex<T>>;
-                    fn get_tag_index(&self, tag: &NamespacedKey) -> Option<TagIndex<T>>;
-                    fn index(&self, value_index: ValueIndex<T>) -> Option<&T>;
-                    fn is_tagged_indexed(&self, tag_index: TagIndex<T>, key: &NamespacedKey) -> bool;
-                    fn index_tagged(&self, tag_index: TagIndex<T>) -> impl Iterator<Item = &T> + ExactSizeIterator;
-                    fn contains(&self, key: &NamespacedKey) -> bool;
-                    fn contains_tag(&self, tag: &NamespacedKey) -> bool;
-                    fn is_tagged(&self, tag: &NamespacedKey, key: &NamespacedKey) -> bool;
-                    fn get(&self, key: &NamespacedKey) -> Option<&T>;
-                    fn get_tagged(&self, tag: &NamespacedKey) -> impl Iterator<Item = &T> + ExactSizeIterator;
-                    fn values(&self) -> impl Iterator<Item = &T> + ExactSizeIterator;
-                }
-            }
-        }
-    };
-}
+pub type BoxedReg<'world, T> = Res<'world, BoxedRegistry<Box<T>>>;
 
-impl_registry_access!(&Reg<'_, T>, as_ref);
-impl_registry_access!(&RegMut<'_, T>, as_ref);
-impl_registry_access!(&Registry<T>, deref);
+pub type BoxedRegMut<'world, T> = ResMut<'world, BoxedRegistry<T>>;
 
-pub type DynReg<'world, T> = Res<'world, DynamicRegistry<T>>;
-
-pub type DynRegMut<'world, T> = ResMut<'world, DynamicRegistry<T>>;
-
-#[derive(Resource)]
-pub struct DynamicRegistry<T: ?Sized + Send + Sync + 'static> {
-    inner: RegistryInner<Box<T>, T>,
-    events: Vec<RegistryEvent<T>>,
-}
-
-impl<T: ?Sized + Send + Sync + 'static> DynamicRegistry<T> {
-    fn new() -> Self {
-        Self {
-            inner: RegistryInner::new(0),
-            events: Vec::new(),
-        }
-    }
-    pub fn clear(&mut self) {
-        self.inner = RegistryInner::new(self.inner.generation() + 1);
-        self.events.clear();
-    }
-    delegate! {
-        to self.inner {
-            pub fn is_mutating(&self) -> bool;
-            pub fn is_frozen(&self) -> bool;
-            pub fn get_index(&self, key: &NamespacedKey) -> Option<ValueIndex<T>>;
-            pub fn get_tag_index(&self, tag: &NamespacedKey) -> Option<TagIndex<T>>;
-            #[expr($.map(|boxed_value| boxed_value.as_ref()))]
-            pub fn index(&self, key: ValueIndex<T>) -> Option<&T>;
-            pub fn is_tagged_indexed(&self, tag_index: TagIndex<T>, key: &NamespacedKey) -> bool;
-            #[expr($.map(|boxed_value| boxed_value.as_ref()))]
-            pub fn index_tagged(&self, key: TagIndex<T>) -> impl Iterator<Item = &T> + ExactSizeIterator;
-            pub fn contains(&self, key: &NamespacedKey) -> bool;
-            pub fn contains_tag(&self, tag: &NamespacedKey) -> bool;
-            pub fn is_tagged(&self, tag: &NamespacedKey, key: &NamespacedKey) -> bool;
-            #[expr($.map(|boxed_value| boxed_value.as_ref()))]
-            pub fn get(&self, key: &NamespacedKey) -> Option<&T>;
-            #[expr($.map(|boxed_value| boxed_value.as_ref()))]
-            pub fn get_tagged(&self, tag: &NamespacedKey) -> impl Iterator<Item = &T> + ExactSizeIterator;
-            #[expr($.map(|boxed_value| boxed_value.as_ref()))]
-            pub fn values(&self) -> impl Iterator<Item = &T> + ExactSizeIterator;
-            #[call(register)]
-            pub fn register_boxed(&mut self, key: NamespacedKey, boxed_value: Box<T>) -> Result<NamespacedKey, RegistryError>;
-            #[call(register_keyed)]
-            pub fn register_boxed_keyed(&mut self, boxed_value: Box<T>) -> Result<NamespacedKey, RegistryError> where T: Keyed;
-            pub fn register_tag(&mut self, tag: NamespacedKey, items: impl Iterator<Item = RegistryTagItem>) -> Result<NamespacedKey, RegistryError>;
-        }
-    }
-    #[inline]
-    pub fn register(&mut self, key: NamespacedKey, value: T) -> Result<NamespacedKey, RegistryError>
-    where
-        T: Sized,
-    {
-        self.register_boxed(key, Box::new(value))
-    }
-    #[inline]
-    pub fn register_keyed(&mut self, value: T) -> Result<NamespacedKey, RegistryError>
-    where
-        T: Keyed + Sized,
-    {
-        self.register(value.key().clone(), value)
-    }
-}
-
-impl<T: ?Sized + Send + Sync + 'static> Index<ValueIndex<T>> for DynamicRegistry<T> {
-    type Output = T;
-    delegate! {
-        to self.inner {
-            #[unwrap]
-            fn index(&self, index: ValueIndex<T>) -> &Self::Output;
-        }
-    }
-}
-
-macro_rules! impl_dyn_registry_access {
-    ($type_: ty, $get_registry: ident) => {
-        impl<T: ?Sized + Send + Sync + 'static> Index<ValueIndex<T>> for $type_ {
-            type Output = T;
-            delegate! {
-                to self.$get_registry() {
-                    #[unwrap]
-                    fn index(&self, key: ValueIndex<T>) -> &Self::Output;
-                }
-            }
-        }
-        impl<T: ?Sized + Send + Sync + 'static> RegistryAccess for $type_ {
-            type Item = T;
-            delegate! {
-                to self.$get_registry() {
-                    fn is_mutating(&self) -> bool;
-                    fn is_frozen(&self) -> bool;
-                    fn get_index(&self, key: &NamespacedKey) -> Option<ValueIndex<T>>;
-                    fn get_tag_index(&self, tag: &NamespacedKey) -> Option<TagIndex<T>>;
-                    fn index(&self, value_index: ValueIndex<T>) -> Option<&T>;
-                    fn is_tagged_indexed(&self, tag_index: TagIndex<T>, key: &NamespacedKey) -> bool;
-                    fn index_tagged(&self, tag_index: TagIndex<T>) -> impl Iterator<Item = &T> + ExactSizeIterator;
-                    fn contains(&self, key: &NamespacedKey) -> bool;
-                    fn contains_tag(&self, tag: &NamespacedKey) -> bool;
-                    fn is_tagged(&self, tag: &NamespacedKey, key: &NamespacedKey) -> bool;
-                    fn get(&self, key: &NamespacedKey) -> Option<&T>;
-                    fn get_tagged(&self, tag: &NamespacedKey) -> impl Iterator<Item = &T> + ExactSizeIterator;
-                    fn values(&self) -> impl Iterator<Item = &T> + ExactSizeIterator;
-                }
-            }
-        }
-    };
-}
-
-impl_dyn_registry_access!(&DynReg<'_, T>, as_ref);
-impl_dyn_registry_access!(&DynRegMut<'_, T>, as_ref);
-impl_dyn_registry_access!(&DynamicRegistry<T>, deref);
+pub type BoxedRegistry<T> = Registry<Box<T>>;
 
 fn process_registry_events<T: Send + Sync + 'static>(
     mut registry: ResMut<Registry<T>>,
@@ -846,34 +779,36 @@ fn process_registry_events<T: Send + Sync + 'static>(
     events.p1().write_batch(freeze_events);
 }
 
-fn process_dynamic_registry_events<T: ?Sized + Send + Sync + 'static>(
-    mut registry: ResMut<DynamicRegistry<T>>,
-    mut events: ParamSet<(
-        MessageReader<RegistryEvent<T>>,
-        MessageWriter<RegistryEvent<T>>,
-    )>,
-) {
-    events
-        .p1()
-        .write_batch(registry.bypass_change_detection().events.drain(..));
-    registry.bypass_change_detection().events.shrink_to_fit();
-    let freeze_events = events
-        .p0()
-        .read()
-        .filter_map(|event| match event {
-            RegistryEvent::Creation(_) => {
-                registry.inner.freeze();
-                Some(RegistryEvent::new_freezing())
-            }
-            _ => None,
-        })
-        .collect::<Box<[_]>>();
-    events.p1().write_batch(freeze_events);
-}
-
 pub trait RegistryInitExt {
+    /// Initializes a new [`Registry<T>`](Registry) and sets up its event system.
+    ///
+    /// # Examples
+    /// ```
+    /// # use bevy::prelude::*;
+    /// # use crate::reg::RegistryInitExt;
+    /// # struct Item;
+    /// let mut app = App::new();
+    /// app.init_registry::<Item>();
+    /// // The registry is now available
+    /// assert!(app.world().contains_resource::<Registry<Item>>());
+    /// ```
     fn init_registry<T: Send + Sync + 'static>(&mut self) -> &mut Self;
-    fn init_dynamic_registry<T: ?Sized + Send + Sync + 'static>(&mut self) -> &mut Self;
+    /// Initializes a new [`BoxedRegistry<T>`](BoxedRegistry) and sets up its event system.
+    ///
+    /// # Examples
+    /// ```
+    /// # use bevy::prelude::*;
+    /// # use crate::reg::RegistryInitExt;
+    /// # trait Lootable {}
+    /// let mut app = App::new();
+    /// app.init_boxed_registry::<dyn Lootable>();
+    /// // The boxed registry is now available
+    /// assert!(app.world().contains_resource::<BoxedRegistry<dyn Lootable>>());
+    /// ```
+    #[inline]
+    fn init_boxed_registry<T: ?Sized + Send + Sync + 'static>(&mut self) -> &mut Self {
+        self.init_registry::<Box<T>>()
+    }
 }
 
 impl RegistryInitExt for SubApp {
@@ -882,13 +817,6 @@ impl RegistryInitExt for SubApp {
         self.insert_resource(Registry::<T>::new());
         self.add_message::<RegistryEvent<T>>();
         self.add_systems(PostUpdate, process_registry_events::<T>);
-        self
-    }
-    #[inline]
-    fn init_dynamic_registry<T: ?Sized + Send + Sync + 'static>(&mut self) -> &mut Self {
-        self.insert_resource(DynamicRegistry::<T>::new());
-        self.add_message::<RegistryEvent<T>>();
-        self.add_systems(PostUpdate, process_dynamic_registry_events::<T>);
         self
     }
 }
@@ -901,11 +829,323 @@ impl RegistryInitExt for App {
         self.add_systems(PostUpdate, process_registry_events::<T>);
         self
     }
-    #[inline]
-    fn init_dynamic_registry<T: ?Sized + Send + Sync + 'static>(&mut self) -> &mut Self {
-        self.insert_resource(DynamicRegistry::<T>::new());
-        self.add_message::<RegistryEvent<T>>();
-        self.add_systems(PostUpdate, process_dynamic_registry_events::<T>);
-        self
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn new_inner<T: 'static>() -> RegistryInner<T> {
+        RegistryInner::new(
+            #[cfg(debug_assertions)]
+            0,
+        )
+    }
+
+    #[test]
+    fn new_registry_is_mutating() {
+        let inner = new_inner::<()>();
+        assert!(inner.is_mutating());
+        assert!(!inner.is_frozen());
+    }
+
+    #[test]
+    fn registering_and_retrieving_value() {
+        let mut inner = new_inner::<i32>();
+        let key = NamespacedKey::new("test", "value1");
+        let result = inner.register(key.clone(), 42);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), key);
+        assert!(inner.contains(&key));
+        assert_eq!(inner.get(&key), Some(&42));
+    }
+
+    #[test]
+    fn registering_duplicate_value() {
+        let mut inner = new_inner::<i32>();
+        let key = NamespacedKey::new("test", "value1");
+        inner.register(key.clone(), 42).unwrap();
+        let result = inner.register(key.clone(), 100);
+        assert!(matches!(result, Err(RegistryError::ValueAlreadyExists { key: k }) if k == key));
+    }
+
+    #[test]
+    fn registering_keyed_value() {
+        let mut inner = new_inner::<(NamespacedKey, i32)>();
+        let key = NamespacedKey::new("test", "value1");
+        let result = inner.register_keyed((key.clone(), 42));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), key);
+        assert!(inner.contains(&key));
+        let retrieved = inner.get(&key).unwrap();
+        assert_eq!(retrieved.0, key);
+        assert_eq!(retrieved.1, 42);
+    }
+
+    #[test]
+    fn registering_and_retrieving_tag() {
+        let mut inner = new_inner::<i32>();
+        let tag = NamespacedKey::new("test", "tag1");
+        let value_key = NamespacedKey::new("test", "value1");
+        inner.register(value_key.clone(), 42).unwrap();
+        let result =
+            inner.register_tag(tag.clone(), vec![RegistryTagItem::Value(value_key.clone())]);
+        assert!(result.is_ok());
+        assert!(inner.contains_tag(&tag));
+    }
+
+    #[test]
+    fn registering_duplicate_tag() {
+        let mut inner = new_inner::<i32>();
+        let tag = NamespacedKey::new("test", "tag1");
+        let items = Vec::new();
+        inner.register_tag(tag.clone(), items).unwrap();
+        let result = inner.register_tag(tag.clone(), vec![]);
+        assert!(matches!(result, Err(RegistryError::TagAlreadyExists { tag: t }) if t == tag));
+    }
+
+    #[test]
+    fn freezing() {
+        let mut inner = new_inner::<i32>();
+        let key = NamespacedKey::new("test", "value1");
+        inner.register(key.clone(), 42).unwrap();
+        assert!(inner.is_mutating());
+        inner.freeze();
+        assert!(inner.is_frozen());
+        assert!(!inner.is_mutating());
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot freeze a frozen registry")]
+    fn freezing_frozen() {
+        let mut inner = new_inner::<i32>();
+        inner.freeze();
+        inner.freeze();
+    }
+
+    #[test]
+    fn registering_after_freezing() {
+        let mut inner = new_inner::<i32>();
+        inner.freeze();
+        let key = NamespacedKey::new("test", "value1");
+        let result = inner.register(key.clone(), 42);
+        assert!(matches!(result, Err(RegistryError::RegistryFrozen {})));
+    }
+
+    #[test]
+    fn indexing_after_freezing() {
+        let mut inner = new_inner::<i32>();
+        let key1 = NamespacedKey::new("test", "value1");
+        let key2 = NamespacedKey::new("test", "value2");
+        inner.register(key1.clone(), 42).unwrap();
+        inner.register(key2.clone(), 100).unwrap();
+        inner.freeze();
+        let index1 = inner.get_index(&key1);
+        let index2 = inner.get_index(&key2);
+        assert!(index1.is_some());
+        assert!(index2.is_some());
+        assert_ne!(index1.unwrap().index, index2.unwrap().index);
+    }
+
+    #[test]
+    fn indexing_before_freezing() {
+        let mut inner = new_inner::<i32>();
+        let key = NamespacedKey::new("test", "value1");
+        inner.register(key.clone(), 42).unwrap();
+        assert!(inner.get_index(&key).is_none());
+    }
+
+    #[test]
+    fn index_retrieval_after_freezing() {
+        let mut inner = new_inner::<i32>();
+        let key = NamespacedKey::new("test", "value1");
+        inner.register(key.clone(), 42).unwrap();
+        inner.freeze();
+        let value_index = inner.get_index(&key).unwrap();
+        let retrieved = inner.index(value_index);
+        assert_eq!(retrieved, Some(&42));
+    }
+
+    #[test]
+    fn index_retrieval_before_freezing() {
+        let mut inner = new_inner::<i32>();
+        let key = NamespacedKey::new("test", "value1");
+        inner.register(key.clone(), 42).unwrap();
+        let value_index = ValueIndex::new(
+            0,
+            #[cfg(debug_assertions)]
+            0,
+        );
+        assert!(inner.index(value_index).is_none());
+    }
+
+    #[test]
+    fn tag_indexing_after_freezing() {
+        let mut inner = new_inner::<i32>();
+        let tag = NamespacedKey::new("test", "tag1");
+        let value_key = NamespacedKey::new("test", "value1");
+        inner.register(value_key.clone(), 42).unwrap();
+        inner
+            .register_tag(tag.clone(), vec![RegistryTagItem::Value(value_key.clone())])
+            .unwrap();
+        inner.freeze();
+        let tag_index = inner.get_tag_index(&tag).unwrap();
+        assert!(inner.is_tagged_indexed(tag_index, &value_key));
+        let tagged_values: Vec<&i32> = inner.index_tagged(tag_index).collect();
+        assert_eq!(tagged_values, vec![&42]);
+    }
+
+    #[test]
+    fn nested_tag_resolution() {
+        let mut inner = new_inner::<i32>();
+        let value1 = NamespacedKey::new("test", "value1");
+        let value2 = NamespacedKey::new("test", "value2");
+        let inner_tag = NamespacedKey::new("test", "inner_tag");
+        let outer_tag = NamespacedKey::new("test", "outer_tag");
+        inner.register(value1.clone(), 42).unwrap();
+        inner.register(value2.clone(), 100).unwrap();
+        inner
+            .register_tag(
+                inner_tag.clone(),
+                vec![RegistryTagItem::Value(value1.clone())],
+            )
+            .unwrap();
+        inner
+            .register_tag(
+                outer_tag.clone(),
+                vec![
+                    RegistryTagItem::Tag(inner_tag.clone()),
+                    RegistryTagItem::Value(value2.clone()),
+                ],
+            )
+            .unwrap();
+        inner.freeze();
+        let outer_tagged: Vec<&i32> = inner.get_tagged(&outer_tag).collect();
+        assert_eq!(outer_tagged.len(), 2);
+        assert!(outer_tagged.contains(&&42));
+        assert!(outer_tagged.contains(&&100));
+        assert!(inner.is_tagged(&outer_tag, &value1));
+        assert!(inner.is_tagged(&outer_tag, &value2));
+        assert!(inner.is_tagged(&inner_tag, &value1));
+        assert!(!inner.is_tagged(&inner_tag, &value2));
+    }
+
+    #[test]
+    #[should_panic(expected = "Cyclic reference in tags")]
+    fn cyclic_tag_reference() {
+        let mut inner = new_inner::<i32>();
+        let tag1 = NamespacedKey::new("test", "tag1");
+        let tag2 = NamespacedKey::new("test", "tag2");
+        inner
+            .register_tag(tag1.clone(), vec![RegistryTagItem::Tag(tag2.clone())])
+            .unwrap();
+        inner
+            .register_tag(tag2.clone(), vec![RegistryTagItem::Tag(tag1.clone())])
+            .unwrap();
+        inner.freeze();
+    }
+
+    #[test]
+    fn values_iterator() {
+        let mut inner = new_inner::<i32>();
+        let key1 = NamespacedKey::new("test", "value1");
+        let key2 = NamespacedKey::new("test", "value2");
+        inner.register(key1.clone(), 42).unwrap();
+        inner.register(key2.clone(), 100).unwrap();
+        let mut values: Vec<&i32> = inner.values().collect();
+        values.sort();
+        assert_eq!(values, vec![&42, &100]);
+        inner.freeze();
+        let values: Vec<&i32> = inner.values().collect();
+        assert_eq!(values.len(), 2);
+        assert!(values.contains(&&42));
+        assert!(values.contains(&&100));
+    }
+
+    #[test]
+    fn getting_tagged_before_freezing() {
+        let mut inner = new_inner::<i32>();
+        let tag = NamespacedKey::new("test", "tag1");
+        let value_key = NamespacedKey::new("test", "value1");
+        inner.register(value_key.clone(), 42).unwrap();
+        inner
+            .register_tag(tag.clone(), vec![RegistryTagItem::Value(value_key.clone())])
+            .unwrap();
+        let tagged: Vec<&i32> = inner.get_tagged(&tag).collect();
+        assert!(tagged.is_empty());
+    }
+
+    #[test]
+    fn unknown_value_in_tag() {
+        let mut inner = new_inner::<i32>();
+        let tag = NamespacedKey::new("test", "tag1");
+        let unknown_key = NamespacedKey::new("test", "unknown");
+        inner
+            .register_tag(
+                tag.clone(),
+                vec![RegistryTagItem::Value(unknown_key.clone())],
+            )
+            .unwrap();
+        inner.freeze();
+        let tagged: Vec<&i32> = inner.get_tagged(&tag).collect();
+        assert!(tagged.is_empty());
+    }
+
+    #[test]
+    fn unknown_tag_in_tag() {
+        let mut inner = new_inner::<i32>();
+        let tag = NamespacedKey::new("test", "tag1");
+        let unknown_tag = NamespacedKey::new("test", "unknown_tag");
+        inner
+            .register_tag(tag.clone(), vec![RegistryTagItem::Tag(unknown_tag.clone())])
+            .unwrap();
+        inner.freeze();
+        let tagged: Vec<&i32> = inner.get_tagged(&tag).collect();
+        assert!(tagged.is_empty());
+    }
+
+    #[test]
+    fn exact_size_iterator_impls() {
+        let mut inner = new_inner::<i32>();
+        let key1 = NamespacedKey::new("test", "value1");
+        let key2 = NamespacedKey::new("test", "value2");
+        inner.register(key1, 42).unwrap();
+        inner.register(key2, 100).unwrap();
+        inner.freeze();
+        let values_iter = inner.values();
+        assert_eq!(values_iter.len(), 2);
+        let count = values_iter.count();
+        assert_eq!(count, 2);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "Value index generation mismatch")]
+    fn value_index_generation_mismatch() {
+        let mut inner = new_inner::<i32>();
+        inner.freeze();
+        let _ = inner.index(ValueIndex::new(0, 42));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "Tag index generation mismatch")]
+    fn tag_index_generation_mismatch() {
+        let mut inner = new_inner::<i32>();
+        inner.freeze();
+        let _ = inner.is_tagged_indexed(TagIndex::new(0, 42), &NamespacedKey::new("test", "value"));
+    }
+
+    #[test]
+    fn registry_clear_resetting_state() {
+        let mut registry = Registry::<i32>::new();
+        let key = NamespacedKey::new("test", "value1");
+        registry.register(key.clone(), 42).unwrap();
+        registry.inner.freeze();
+        assert!(registry.is_frozen());
+        registry.clear();
+        assert!(registry.is_mutating());
+        assert!(!registry.is_frozen());
+        assert!(!registry.contains(&key));
     }
 }

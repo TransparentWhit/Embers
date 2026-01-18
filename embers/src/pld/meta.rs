@@ -1,7 +1,7 @@
 use crate::dim::Particles;
 use crate::dim::actor::living::AttributeBase;
 use crate::dim::item::{ItemAction, ItemActionTemplate, ItemComponent};
-use crate::reg::{DynReg, DynamicRegistry, RegMut, Registry};
+use crate::reg::{BoxedReg, BoxedRegistry, RegMut, Registry};
 use crate::utils::{NamespacedKey, path_to_unix_components};
 use anyhow::Error;
 use bevy::asset::io::Reader;
@@ -151,7 +151,7 @@ pub fn reload_metadata(
         (Res<Assets<ActorBase>>, RegMut<AttributeBase>),
         (
             Res<Assets<ItemActionMeta>>,
-            DynReg<dyn ItemActionTemplate>,
+            BoxedReg<dyn ItemActionTemplate>,
             RegMut<ItemAction>,
         ),
         Res<Assets<ItemPrototype>>,
@@ -277,7 +277,7 @@ pub fn reload_metadata(
                 .expect("Failed to register particle");
         },
     );*/
-    world.resource_scope::<DynamicRegistry<dyn ItemComponent>, ()>(|world, item_components| {
+    world.resource_scope::<BoxedRegistry<dyn ItemComponent>, ()>(|world, item_components| {
         for item_component in item_components.values() {
             item_component.reset_registry(world);
         }
