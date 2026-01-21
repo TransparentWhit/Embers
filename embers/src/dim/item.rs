@@ -4,7 +4,7 @@ use crate::dim::actor::living::player::Player;
 use crate::dim::actor::primed_tnt::primed_tnt;
 use crate::dim::{Action, Actions, CollisionLayer, exclude_source};
 use crate::input::InteractionTrigger;
-use crate::reg::{BoxedRegMut, BoxedRegistry, Registry, RegistryError, RegistryInitExt};
+use crate::reg::{RegBoxedMut, Registry, RegistryBoxed, RegistryError, RegistryInitExt};
 use crate::utils::physics::section;
 use crate::utils::{Keyed, NamespacedKey, UntypedCmp, UntypedPartialCmp};
 use anyhow::Error;
@@ -38,7 +38,7 @@ pub mod embers {
 pub struct ItemStack(NamespacedKey);
 
 static DEFAULT_ITEM_KEY: LazyLock<NamespacedKey> =
-    LazyLock::new(|| NamespacedKey::new("_", "undefined"));
+    LazyLock::new(|| NamespacedKey::new("_", "missingno"));
 
 impl Default for ItemStack {
     fn default() -> Self {
@@ -96,10 +96,10 @@ impl Default for MaxStackSize {
 
 #[derive(Component, Deserialize, Serialize, Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct InitialItemActions {
-    pub hands_click: Option<NamespacedKey>,
-    pub hands_double_click: Option<NamespacedKey>,
-    pub armor_click: Option<NamespacedKey>,
-    pub armor_double_click: Option<NamespacedKey>,
+    hands_click: Option<NamespacedKey>,
+    hands_double_click: Option<NamespacedKey>,
+    armor_click: Option<NamespacedKey>,
+    armor_double_click: Option<NamespacedKey>,
 }
 
 impl InitialItemActions {
@@ -262,7 +262,7 @@ pub trait ItemComponent: Keyed + for<'world> UntypedCmp<EntityRef<'world>> + Sen
     fn register_prototype(&self, world: &mut World, item: NamespacedKey, value: Value);
 }
 
-impl BoxedRegistry<dyn ItemComponent> {
+impl RegistryBoxed<dyn ItemComponent> {
     pub fn register_default<C: Component + for<'de> Deserialize<'de> + Eq>(
         &mut self,
         key: NamespacedKey,
@@ -310,15 +310,15 @@ pub(super) fn plugin(app: &mut App) {
     app.init_registry::<Enchantments>()
         .init_registry::<InitialItemActions>()
         .init_registry::<ItemAction>()
-        .init_boxed_registry::<dyn ItemActionTemplate>()
+        .init_registry_boxed::<dyn ItemActionTemplate>()
         .init_registry::<MaxStackSize>()
         .init_registry::<RangedAmmo>()
         .init_registry::<Weight>()
-        .init_boxed_registry::<dyn ItemComponent>()
+        .init_registry_boxed::<dyn ItemComponent>()
         .add_systems(
             PreStartup,
             (
-                |mut item_action_templates: BoxedRegMut<dyn ItemActionTemplate>| {
+                |mut item_action_templates: RegBoxedMut<dyn ItemActionTemplate>| {
                     (|| {
                         item_action_templates.register(
                             NamespacedKey::new_embers("melee"),
@@ -396,7 +396,6 @@ pub(super) fn plugin(app: &mut App) {
                                         asset_server,
                                         player,
                                     }, _item| {
-                                        info!("flag");
                                         let (player, transform) = **player;
                                         commands.spawn((
                                             primed_tnt(asset_server),
@@ -450,7 +449,7 @@ pub(super) fn plugin(app: &mut App) {
                     })()
                     .expect("Failed to register item action templates");
                 },
-                |mut item_components: BoxedRegMut<dyn ItemComponent>| {
+                |mut item_components: RegBoxedMut<dyn ItemComponent>| {
                     (|| {
                         item_components.register_default::<RangedAmmo>(
                             NamespacedKey::new_embers("ranged_ammo"),

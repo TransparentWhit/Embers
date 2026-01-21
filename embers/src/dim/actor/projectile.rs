@@ -3,5 +3,5 @@ use super::actor;
 use bevy::prelude::*;
 
 pub fn projectile() -> impl Bundle {
-    (actor(), PhysicsPreset::Projectile.physics())
+    (actor(), PhysicsPreset::Projectile.physics(false))
 }

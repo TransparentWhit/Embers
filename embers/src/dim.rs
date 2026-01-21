@@ -3,9 +3,10 @@ pub mod item;
 
 use crate::dim::actor::living::player;
 use crate::dim::actor::living::player::{Player, PlayerInventory};
+use crate::dim::item::inv::{ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt};
 use crate::input::InteractionTrigger;
 use crate::pld::PayloadScope;
-use crate::reg::{Reg, RegistryInitExt};
+use crate::reg::{Reg, RegMut, RegistryError, RegistryInitExt};
 use crate::utils::{Keyed, Namespaced, NamespacedKey};
 use avian3d::prelude::PhysicsLayer;
 use avian3d::prelude::*;
@@ -28,37 +29,13 @@ const LOCK_XZ_ROTATION: LockedAxes = LockedAxes::new().lock_rotation_x().lock_ro
 
 #[derive(PhysicsLayer, Default, Copy, Clone)]
 enum CollisionLayer {
+    Interactable,
     LivingActor,
     MiscActor,
     #[default]
     Phantom,
     Projectile,
     Environment,
-}
-
-impl From<CollisionLayer> for CollisionLayers {
-    fn from(value: CollisionLayer) -> CollisionLayers {
-        CollisionLayers::new(
-            value,
-            match value {
-                CollisionLayer::Phantom => [
-                    CollisionLayer::LivingActor,
-                    CollisionLayer::MiscActor,
-                    CollisionLayer::Projectile,
-                    CollisionLayer::Environment,
-                ]
-                .into(),
-                CollisionLayer::Environment => [
-                    CollisionLayer::LivingActor,
-                    CollisionLayer::MiscActor,
-                    CollisionLayer::Phantom,
-                    CollisionLayer::Projectile,
-                ]
-                .into(),
-                _ => LayerMask::ALL,
-            },
-        )
-    }
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -71,16 +48,43 @@ pub enum PhysicsPreset {
 }
 
 impl PhysicsPreset {
-    pub fn physics(&self) -> Physics {
+    #[inline]
+    pub fn physics(&self, interactable: bool) -> Physics {
         (
-            match self {
-                Self::LivingActor => CollisionLayer::LivingActor,
-                Self::MiscActor => CollisionLayer::MiscActor,
-                Self::Phantom => CollisionLayer::Phantom,
-                Self::Projectile => CollisionLayer::Projectile,
-                Self::Environment => CollisionLayer::Environment,
-            }
-            .into(),
+            CollisionLayers::new(
+                LayerMask(
+                    match self {
+                        Self::LivingActor => CollisionLayer::LivingActor,
+                        Self::MiscActor => CollisionLayer::MiscActor,
+                        Self::Phantom => CollisionLayer::Phantom,
+                        Self::Projectile => CollisionLayer::Projectile,
+                        Self::Environment => CollisionLayer::Environment,
+                    }
+                    .to_bits()
+                        | if interactable {
+                            CollisionLayer::Interactable.to_bits()
+                        } else {
+                            0
+                        },
+                ),
+                match self {
+                    Self::Phantom => [
+                        CollisionLayer::LivingActor,
+                        CollisionLayer::MiscActor,
+                        CollisionLayer::Projectile,
+                        CollisionLayer::Environment,
+                    ]
+                    .into(),
+                    Self::Environment => [
+                        CollisionLayer::LivingActor,
+                        CollisionLayer::MiscActor,
+                        CollisionLayer::Phantom,
+                        CollisionLayer::Projectile,
+                    ]
+                    .into(),
+                    _ => LayerMask::ALL,
+                },
+            ),
             Dominance(match self {
                 Self::LivingActor => 3,
                 Self::MiscActor => 2,
@@ -97,13 +101,6 @@ impl PhysicsPreset {
                 _ => RigidBody::Dynamic,
             },
         )
-    }
-}
-
-impl From<PhysicsPreset> for Physics {
-    #[inline]
-    fn from(value: PhysicsPreset) -> Physics {
-        value.physics()
     }
 }
 
@@ -307,7 +304,7 @@ fn update_action<
         interruption_events.clear();
         interrupted
     });
-    match trigger.inspect(|t| info!("flag0 {:?} {:?}", status, t)) {
+    match trigger {
         Some(active_trigger) => {
             if status.is_idle() {
                 if let Some(action) = actions.get(active_trigger) {
@@ -380,7 +377,7 @@ pub struct EntityInteractionEnvironment<'w, 's> {
     player: Single<'w, 's, (Entity, &'static PlayerInventory, &'static Transform), With<Player>>,
 }
 
-pub type EntityInteractions = Actions<EntityInteractionEnvironment<'static, 'static>>;
+pub type EntityInteractions = Actions<EntityInteraction>;
 
 #[derive(Clone)]
 #[identify(key)]
@@ -442,6 +439,22 @@ impl Action for EntityInteraction {
     }
 }
 
+#[derive(Component, Clone, Debug, Default, PartialEq)]
+pub struct Interactable {
+    pub distance_factor: f32,
+    pub initial_click: Option<NamespacedKey>,
+    pub initial_double_click: Option<NamespacedKey>,
+}
+
+impl Interactable {
+    pub fn get_initial_interaction(&self, trigger: InteractionTrigger) -> Option<&NamespacedKey> {
+        match trigger {
+            InteractionTrigger::Click => self.initial_click.as_ref(),
+            InteractionTrigger::DoubleClick => self.initial_double_click.as_ref(),
+        }
+    }
+}
+
 /// Time of the day, within [0, 1).
 #[derive(Component)]
 pub struct Time(pub f32);
@@ -481,6 +494,34 @@ pub static LOBBY: LazyLock<Dimension> =
 pub(super) fn plugin(app: &mut App) {
     app.init_registry::<Particles>()
         .add_message::<ActionInterruptionEvent>()
+        .init_registry::<EntityInteraction>()
+        .add_systems(
+            PreStartup,
+            |mut entity_interactions: RegMut<EntityInteraction>| {
+                (|| {
+                    entity_interactions.register_keyed(EntityInteraction::new(
+                        NamespacedKey::new_embers("item_actor/pickup"),
+                        |_environment, _entity| {},
+                        |EntityInteractionEnvironment { commands, player }, entity, _duration| {
+                            let (player, inventory, _global_transform) = **player;
+                            commands.move_item(
+                                ItemSource::item_actor(entity),
+                                ItemDestination::inventory_range(
+                                    player,
+                                    0..inventory.size(),
+                                    inventory,
+                                ),
+                                ItemMoveQuantity::All,
+                            );
+                            None
+                        },
+                        Duration::from_millis(200),
+                    ))?;
+                    Ok::<(), RegistryError>(())
+                })()
+                .expect("Failed to register entity interactions")
+            },
+        )
         .add_plugins(actor::plugin)
         .add_plugins(item::plugin)
         .add_plugins(player::plugin);

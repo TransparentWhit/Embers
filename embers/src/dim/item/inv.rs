@@ -1,6 +1,6 @@
 use crate::dim::actor::item_actor::ItemActor;
 use crate::dim::item::{ItemComponent, ItemStack, MaxStackSize, StackCount};
-use crate::reg::{BoxedRegistry, OrRegistry, Registry};
+use crate::reg::{OrRegistry, Registry, RegistryBoxed};
 use crate::utils::Marker;
 use bevy::prelude::*;
 use std::any::type_name;
@@ -73,6 +73,13 @@ range_index_inventory!(
     *idx.start() as usize..*idx.end() as usize
 );
 
+impl<const N: usize, M: Marker> Inventory<N, M> {
+    #[inline]
+    pub fn size(&self) -> InventorySlot {
+        N as InventorySlot
+    }
+}
+
 enum ItemStackResult {
     /// Failure; Cannot stack.
     NotStackable,
@@ -105,7 +112,7 @@ fn try_stack(
         None => return ItemStackResult::NotStackable,
     };
     if world
-        .resource::<BoxedRegistry<dyn ItemComponent>>()
+        .resource::<RegistryBoxed<dyn ItemComponent>>()
         .values()
         .any(|item_component| item_component.ne(source_ref, target_ref))
     {

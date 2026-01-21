@@ -1,7 +1,8 @@
 use crate::utils::{Keyed, NamespacedKey};
 use bevy::prelude::*;
+use bevy::tasks::futures_lite::StreamExt;
 use delegate::delegate;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::iter::{Empty, Map, empty, once};
 use std::marker::PhantomData;
 use std::mem::take;
@@ -71,19 +72,21 @@ impl<T: Clone + Send + Sync, E> UnwrapOrRegistry for Result<T, E> {
     }
 }
 
+#[derive(Debug)]
 pub struct RegistryCreateEvent<T> {
     _marker: PhantomData<T>,
 }
 
-pub type BoxedRegistryCreateEvent<T> = RegistryCreateEvent<Box<T>>;
+pub type RegistryBoxedCreateEvent<T> = RegistryCreateEvent<Box<T>>;
 
+#[derive(Debug)]
 pub struct RegistryFreezeEvent<T> {
     _marker: PhantomData<T>,
 }
 
-pub type BoxedRegistryFreezeEvent<T> = RegistryFreezeEvent<Box<T>>;
+pub type RegistryBoxedFreezeEvent<T> = RegistryFreezeEvent<Box<T>>;
 
-#[derive(Message)]
+#[derive(Debug, Message)]
 pub enum RegistryEvent<T> {
     Creation(RegistryCreateEvent<T>),
     Freezing(RegistryFreezeEvent<T>),
@@ -102,7 +105,7 @@ impl<T> RegistryEvent<T> {
     }
 }
 
-pub type BoxedRegistryEvent<T> = RegistryEvent<Box<T>>;
+pub type RegistryBoxedEvent<T> = RegistryEvent<Box<T>>;
 
 #[derive(Debug, Error)]
 pub enum RegistryError {
@@ -139,7 +142,7 @@ pub enum RegistryTagItem {
 /// - **Registry State**: Indices are only valid when the registry is frozen.
 ///
 /// See also: [TagIndex]
-#[derive(Copy, Clone, Eq, Hash, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ValueIndex<T> {
     index: usize,
     #[cfg(debug_assertions)]
@@ -171,7 +174,7 @@ pub type BoxedValueIndex<T> = ValueIndex<Box<T>>;
 /// - **Registry State**: Indices are only valid when the registry is frozen.
 ///
 /// See also: [ValueIndex]
-#[derive(Copy, Clone, Eq, Hash, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub struct TagIndex<T> {
     index: usize,
     #[cfg(debug_assertions)]
@@ -385,10 +388,10 @@ impl<T: 'static> RegistryInner<T> {
                 ..
             } => tag_indices
                 .get(tag)
-                .map(|tag_index| &tags[*tag_index])
+                .map(|tag_idx| &tags[*tag_idx])
                 .zip(indices.get(key))
-                .map_or(false, |(value_indices, value_index)| {
-                    value_indices.contains(value_index)
+                .map_or(false, |(value_indices, value_idx)| {
+                    value_indices.contains(value_idx)
                 }),
         }
     }
@@ -442,17 +445,15 @@ impl<T: 'static> RegistryInner<T> {
                 ..
             } => tag_indices
                 .get(tag)
-                .map(|tag_index| {
+                .map(|tag_idx| {
                     RegistryTaggedIter::MapHashSetIter(
-                        tags[*tag_index]
-                            .iter()
-                            .map(|value_index| &values[*value_index]),
+                        tags[*tag_idx].iter().map(|value_idx| &values[*value_idx]),
                     )
                 })
                 .unwrap_or_else(|| RegistryTaggedIter::Empty(empty())),
         }
     }
-    fn values(&self) -> impl Iterator<Item = &T> + ExactSizeIterator {
+    fn values(&'_ self) -> impl Iterator<Item = &T> + ExactSizeIterator {
         enum RegistryValuesIter<'item, T> {
             HashMapValues(std::collections::hash_map::Values<'item, NamespacedKey, T>),
             SliceIter(std::slice::Iter<'item, T>),
@@ -748,11 +749,11 @@ impl<T: Send + Sync + 'static> Index<ValueIndex<T>> for Registry<T> {
     }
 }
 
-pub type BoxedReg<'world, T> = Res<'world, BoxedRegistry<Box<T>>>;
+pub type RegBoxed<'world, T> = Res<'world, RegistryBoxed<T>>;
 
-pub type BoxedRegMut<'world, T> = ResMut<'world, BoxedRegistry<T>>;
+pub type RegBoxedMut<'world, T> = ResMut<'world, RegistryBoxed<T>>;
 
-pub type BoxedRegistry<T> = Registry<Box<T>>;
+pub type RegistryBoxed<T> = Registry<Box<T>>;
 
 fn process_registry_events<T: Send + Sync + 'static>(
     mut registry: ResMut<Registry<T>>,
@@ -793,7 +794,7 @@ pub trait RegistryInitExt {
     /// assert!(app.world().contains_resource::<Registry<Item>>());
     /// ```
     fn init_registry<T: Send + Sync + 'static>(&mut self) -> &mut Self;
-    /// Initializes a new [`BoxedRegistry<T>`](BoxedRegistry) and sets up its event system.
+    /// Initializes a new [`RegistryBoxed<T>`](RegistryBoxed) and sets up its event system.
     ///
     /// # Examples
     /// ```
@@ -806,7 +807,7 @@ pub trait RegistryInitExt {
     /// assert!(app.world().contains_resource::<BoxedRegistry<dyn Lootable>>());
     /// ```
     #[inline]
-    fn init_boxed_registry<T: ?Sized + Send + Sync + 'static>(&mut self) -> &mut Self {
+    fn init_registry_boxed<T: ?Sized + Send + Sync + 'static>(&mut self) -> &mut Self {
         self.init_registry::<Box<T>>()
     }
 }
@@ -940,11 +941,11 @@ mod tests {
         inner.register(key1.clone(), 42).unwrap();
         inner.register(key2.clone(), 100).unwrap();
         inner.freeze();
-        let index1 = inner.get_index(&key1);
-        let index2 = inner.get_index(&key2);
-        assert!(index1.is_some());
-        assert!(index2.is_some());
-        assert_ne!(index1.unwrap().index, index2.unwrap().index);
+        let idx1 = inner.get_index(&key1);
+        let idx2 = inner.get_index(&key2);
+        assert!(idx1.is_some());
+        assert!(idx2.is_some());
+        assert_ne!(idx1.unwrap().index, idx2.unwrap().index);
     }
 
     #[test]
@@ -961,8 +962,8 @@ mod tests {
         let key = NamespacedKey::new("test", "value1");
         inner.register(key.clone(), 42).unwrap();
         inner.freeze();
-        let value_index = inner.get_index(&key).unwrap();
-        let retrieved = inner.index(value_index);
+        let value_idx = inner.get_index(&key).unwrap();
+        let retrieved = inner.index(value_idx);
         assert_eq!(retrieved, Some(&42));
     }
 
@@ -971,12 +972,12 @@ mod tests {
         let mut inner = new_inner::<i32>();
         let key = NamespacedKey::new("test", "value1");
         inner.register(key.clone(), 42).unwrap();
-        let value_index = ValueIndex::new(
+        let value_idx = ValueIndex::new(
             0,
             #[cfg(debug_assertions)]
             0,
         );
-        assert!(inner.index(value_index).is_none());
+        assert!(inner.index(value_idx).is_none());
     }
 
     #[test]
@@ -989,9 +990,9 @@ mod tests {
             .register_tag(tag.clone(), vec![RegistryTagItem::Value(value_key.clone())])
             .unwrap();
         inner.freeze();
-        let tag_index = inner.get_tag_index(&tag).unwrap();
-        assert!(inner.is_tagged_indexed(tag_index, &value_key));
-        let tagged_values: Vec<&i32> = inner.index_tagged(tag_index).collect();
+        let tag_idx = inner.get_tag_index(&tag).unwrap();
+        assert!(inner.is_tagged_indexed(tag_idx, &value_key));
+        let tagged_values: Vec<&i32> = inner.index_tagged(tag_idx).collect();
         assert_eq!(tagged_values, vec![&42]);
     }
 

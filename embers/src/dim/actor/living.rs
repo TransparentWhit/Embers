@@ -26,7 +26,11 @@ impl AttributeBase {
     }
 }
 
-pub fn living_actor(key: &NamespacedKey, attribute_bases: &Registry<AttributeBase>) -> impl Bundle {
+pub fn living_actor(
+    key: &NamespacedKey,
+    attribute_bases: &Registry<AttributeBase>,
+    interactable: bool,
+) -> impl Bundle {
     let attributes: HashMap<NamespacedKey, AttributeInstance> = attribute_bases
         .get(key)
         .expect("Attribute base not found")
@@ -36,7 +40,7 @@ pub fn living_actor(key: &NamespacedKey, attribute_bases: &Registry<AttributeBas
         .collect();
     (
         actor(),
-        PhysicsPreset::LivingActor.physics(),
+        PhysicsPreset::LivingActor.physics(interactable),
         Health(
             attributes
                 .get(&attributes::embers::MAX_HEALTH)

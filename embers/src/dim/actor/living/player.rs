@@ -8,7 +8,11 @@ use crate::dim::item::{
     HandActionWield, ItemAction, ItemActionEnvironment, ItemActionWield, ItemActions, ItemStack,
 };
 use crate::dim::item::{InitialItemActions, ItemActionSlot};
-use crate::dim::{ActionStatus, ActionStatusComponent, Actions, ActionsComponent, update_action};
+use crate::dim::{
+    ActionStatus, ActionStatusComponent, Actions, ActionsComponent, CollisionLayer,
+    EntityInteraction, EntityInteractionEnvironment, EntityInteractions, Interactable,
+    update_action,
+};
 use crate::input::{DoubleClicks, InputButton, InteractionTrigger, just_pressed, pressed};
 use crate::reg::{OrRegistry, Reg, Registry};
 use crate::ui::dim::PlayerCamera;
@@ -62,6 +66,90 @@ controls![CONTROLS_HOTBARS, HOTBAR_SLOTS as usize,
 controls!(CONTROLS_SWAP_OFF_HAND, K@KeyF);
 controls!(CONTROLS_INVENTORY, K@KeyR);
 
+static ENTITY_INTERACTION_COLLIDER: LazyLock<Collider> =
+    LazyLock::new(|| Collider::cylinder(3., 2.));
+
+fn process_input_entity_interactions_schedule() -> ScheduleConfigs<ScheduleSystem> {
+    |spatial_query: SpatialQuery,
+     keys: Res<ButtonInput<KeyCode>>,
+     mouse: Res<ButtonInput<MouseButton>>,
+     double_clicks: Res<DoubleClicks>,
+     mut player: Single<(Entity, &mut PlayerEntityInteractions, &GlobalTransform), With<Player>>,
+     interactables: Query<(&Interactable, &GlobalTransform)>,
+     entity_interaction_reg: Reg<EntityInteraction>|
+     -> (Entity, (), Option<InteractionTrigger>, Option<Entity>) {
+        let (player, ref mut player_interactions, transform) = *player;
+        **player_interactions = PlayerEntityInteractions::default();
+        (
+            player,
+            (),
+            if double_clicks.double_clicked(*CONTROLS_INTERACT.read().unwrap()) {
+                Some(InteractionTrigger::DoubleClick)
+            } else if pressed(&CONTROLS_INTERACT, &keys, &mouse) {
+                Some(InteractionTrigger::Click)
+            } else {
+                None
+            },
+            spatial_query
+                .shape_intersections(
+                    &ENTITY_INTERACTION_COLLIDER,
+                    transform.translation(),
+                    transform.rotation(),
+                    &SpatialQueryFilter::from_mask(CollisionLayer::Interactable),
+                )
+                .iter()
+                .filter_map(|entity| {
+                    interactables
+                        .get(*entity)
+                        .ok()
+                        .map(|(interactable, interactable_transform)| {
+                            (
+                                interactable_transform
+                                    .translation()
+                                    .distance(transform.translation())
+                                    * interactable.distance_factor,
+                                *entity,
+                            )
+                        })
+                })
+                .min_by(|(lhs_distance, _lhs_entity), (rhs_distance, _rhs_entity)| {
+                    f32::total_cmp(lhs_distance, rhs_distance)
+                })
+                .map(|(_distance, entity)| {
+                    let (interactable, _interactable_transform) =
+                        interactables.get(entity).unwrap();
+                    for trigger in [InteractionTrigger::DoubleClick, InteractionTrigger::Click] {
+                        interactable
+                            .get_initial_interaction(trigger)
+                            .as_ref()
+                            .and_then(|interaction_key| entity_interaction_reg.get(interaction_key))
+                            .map(|interaction| {
+                                player_interactions
+                                    .0
+                                    .set(InteractionTrigger::Click, interaction.clone())
+                            });
+                    }
+                    entity
+                }),
+        )
+    }
+    .pipe(
+        update_action::<
+            EntityInteraction,
+            (),
+            PlayerEntityInteractionStatus,
+            PlayerEntityInteractions,
+            With<Player>,
+            EntityInteractionEnvironment<'static, 'static>,
+        >,
+    )
+    .pipe(
+        |mut interaction_status: Single<&mut PlayerEntityInteractionStatus, With<Player>>,
+         time: Res<Time>| interaction_status.tick(time.delta()),
+    )
+    .into_configs()
+}
+
 fn process_input_item_actions_schedule() -> ScheduleConfigs<ScheduleSystem> {
     let update_slot_action_system =
         |equipment_slot: EquipmentSlot, control: &'static RwLock<InputButton>| {
@@ -72,8 +160,8 @@ fn process_input_item_actions_schedule() -> ScheduleConfigs<ScheduleSystem> {
                   player: Single<
                       (
                           Entity,
-                          &PlayerActionStatus,
-                          &PlayerEquipmentActions,
+                          &PlayerItemActionStatus,
+                          &PlayerEquipmentItemActions,
                           &PlayerInventory,
                           &SelectedHotbarSlot,
                       ),
@@ -138,15 +226,15 @@ fn process_input_item_actions_schedule() -> ScheduleConfigs<ScheduleSystem> {
                     update_action::<
                         ItemAction,
                         EquipmentSlot,
-                        PlayerActionStatus,
-                        PlayerEquipmentActions,
+                        PlayerItemActionStatus,
+                        PlayerEquipmentItemActions,
                         With<Player>,
                         ItemActionEnvironment<'static, 'static>,
                     >,
                 )
         )
         };
-    let tick_actions = |mut action_status: Single<&mut PlayerActionStatus, With<Player>>,
+    let tick_actions = |mut action_status: Single<&mut PlayerItemActionStatus, With<Player>>,
                         time: Res<Time>| action_status.tick(time.delta());
     (
         (
@@ -176,7 +264,7 @@ pub fn process_input_hotbar(
             Entity,
             &PlayerInventory,
             &mut SelectedHotbarSlot,
-            &mut PlayerEquipmentActions,
+            &mut PlayerEquipmentItemActions,
         ),
         With<Player>,
     >,
@@ -301,8 +389,10 @@ const FLOAT_HEIGHT: f32 = 1.0;
 #[derive(Component, Debug)]
 #[require(
     SelectedHotbarSlot,
-    PlayerActionStatus,
-    PlayerEquipmentActions,
+    PlayerEntityInteractionStatus,
+    PlayerEntityInteractions,
+    PlayerItemActionStatus,
+    PlayerEquipmentItemActions,
     PlayerInventory::new()
 )]
 pub struct Player {
@@ -359,6 +449,40 @@ impl Default for SelectedHotbarSlot {
     }
 }
 
+#[derive(Component, Debug, Default)]
+pub struct PlayerEntityInteractionStatus(ActionStatus);
+
+impl ActionStatusComponent for PlayerEntityInteractionStatus {
+    type Key = ();
+    fn get_action_status(&self, _key: &Self::Key) -> &ActionStatus {
+        &self.0
+    }
+    fn get_action_status_mut(&mut self, _key: &Self::Key) -> &mut ActionStatus {
+        &mut self.0
+    }
+}
+
+impl PlayerEntityInteractionStatus {
+    fn tick(&mut self, delta: Duration) {
+        if let ActionStatus::Active { timer, .. } = &mut self.0 {
+            timer.tick(delta);
+        }
+    }
+}
+
+#[derive(Component, Default)]
+pub struct PlayerEntityInteractions(EntityInteractions);
+
+impl ActionsComponent<EntityInteraction> for PlayerEntityInteractions {
+    type Key = ();
+    fn get_actions(&self, _key: &Self::Key) -> &Actions<EntityInteraction> {
+        &self.0
+    }
+    fn get_actions_mut(&mut self, _key: &Self::Key) -> &mut Actions<EntityInteraction> {
+        &mut self.0
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum EquipmentSlot {
     MainHand,
@@ -376,13 +500,13 @@ impl EquipmentSlot {
 }
 
 #[derive(Component, Debug, Default)]
-pub struct PlayerActionStatus {
+pub struct PlayerItemActionStatus {
     main_hand: ActionStatus,
     off_hand: ActionStatus,
     armor: ActionStatus,
 }
 
-impl ActionStatusComponent for PlayerActionStatus {
+impl ActionStatusComponent for PlayerItemActionStatus {
     type Key = EquipmentSlot;
     #[inline]
     fn get_action_status(&self, key: &Self::Key) -> &ActionStatus {
@@ -394,7 +518,7 @@ impl ActionStatusComponent for PlayerActionStatus {
     }
 }
 
-impl PlayerActionStatus {
+impl PlayerItemActionStatus {
     fn get(&self, slot: EquipmentSlot) -> &ActionStatus {
         match slot {
             EquipmentSlot::MainHand => &self.main_hand,
@@ -419,13 +543,13 @@ impl PlayerActionStatus {
 }
 
 #[derive(Component, Default)]
-pub struct PlayerEquipmentActions {
+pub struct PlayerEquipmentItemActions {
     main_hand: ItemActions,
     off_hand: ItemActions,
     armor: ItemActions,
 }
 
-impl ActionsComponent<ItemAction> for PlayerEquipmentActions {
+impl ActionsComponent<ItemAction> for PlayerEquipmentItemActions {
     type Key = EquipmentSlot;
     #[inline]
     fn get_actions(&self, key: &Self::Key) -> &Actions<ItemAction> {
@@ -437,7 +561,7 @@ impl ActionsComponent<ItemAction> for PlayerEquipmentActions {
     }
 }
 
-impl PlayerEquipmentActions {
+impl PlayerEquipmentItemActions {
     pub fn get_slot(&self, slot: EquipmentSlot) -> &ItemActions {
         match slot {
             EquipmentSlot::MainHand => &self.main_hand,
@@ -468,7 +592,7 @@ impl PlayerEquipmentActions {
 
 pub fn player(attribute_bases: &Registry<AttributeBase>) -> impl Bundle {
     (
-        living_actor(&KEY, attribute_bases),
+        living_actor(&KEY, attribute_bases, false),
         Collider::cylinder(0.5, 1.7),
         Player {
             flops: 0,
@@ -484,6 +608,7 @@ pub(in crate::dim) fn plugin(app: &mut App) {
     app.add_systems(
         Update,
         (
+            process_input_entity_interactions_schedule(),
             process_input_item_actions_schedule().after(process_input_hotbar),
             process_input_hotbar,
             process_input_movement,

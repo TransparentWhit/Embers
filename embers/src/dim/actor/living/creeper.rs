@@ -12,7 +12,7 @@ pub struct Creeper {}
 
 pub fn creeper(attribute_bases: &Registry<AttributeBase>) -> impl Bundle {
     (
-        living_actor(&KEY, attribute_bases),
+        living_actor(&KEY, attribute_bases, false),
         Collider::cylinder(0.5, 1.7),
         Creeper {},
     )

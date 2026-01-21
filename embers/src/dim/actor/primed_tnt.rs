@@ -74,7 +74,7 @@ pub(in crate::dim::actor) fn fuse(
 pub fn primed_tnt(asset_server: &AssetServer) -> impl Bundle {
     (
         actor(),
-        PhysicsPreset::MiscActor.physics(),
+        PhysicsPreset::MiscActor.physics(false),
         Fuse::default(),
         AnimationPlayer::default(),
         SceneRoot(GLOBAL_PAYLOADS.actor_scene(asset_server, &MODEL_KEY, 0)),

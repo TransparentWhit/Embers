@@ -1,21 +1,19 @@
 use crate::GameState;
-use crate::dim::actor::item_actor::{ItemActor, item_actor};
+use crate::dim::PhysicsPreset;
+use crate::dim::actor::item_actor::item_actor_of;
 use crate::dim::actor::living::AttributeBase;
 use crate::dim::actor::living::dummy::dummy;
 use crate::dim::actor::living::player::{
     HOTBAR_SLOTS, HotbarSelectionUpdated, Player, PlayerInventory, SelectedHotbarSlot, player,
     process_input_hotbar,
 };
-use crate::dim::item::inv::{
-    InventorySlot, ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt,
-};
+use crate::dim::item::inv::InventorySlot;
 use crate::dim::item::{ItemStack, sword, tnt};
 use crate::pld::GLOBAL_PAYLOADS;
 use crate::reg::Reg;
 use crate::utils::Keyed;
 use avian3d::prelude::*;
 use bevy::camera::{ScalingMode, Viewport};
-use bevy::input::keyboard::KeyboardInput;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowResized};
@@ -181,8 +179,8 @@ fn init(
             (
                 Mesh3d(meshes.add(Plane3d::default().mesh().size(20., 20.))),
                 MeshMaterial3d(materials.add(Color::WHITE)),
+                PhysicsPreset::Environment.physics(false),
                 Ground,
-                RigidBody::Static,
                 Collider::heightfield(vec![vec![0.0, 0.0], vec![0.0, 0.0]], Vec3::splat(20.)),
             ),
             (
@@ -203,6 +201,14 @@ fn init(
             (
                 dummy(&asset_server, attribute_bases.as_ref()),
                 Transform::from_xyz(5.0, 0.5, 0.0)
+            ),
+            (
+                item_actor_of(&asset_server, sword()),
+                Transform::from_xyz(2.0, 1.0, 0.0),
+            ),
+            (
+                item_actor_of(&asset_server, tnt()),
+                Transform::from_xyz(2.0, 1.0, 0.0),
             ),
         ],
     ));
@@ -304,32 +310,7 @@ fn update_hotbar_selection(
 }
 
 pub(super) fn plugin(app: &mut App) {
-    app.add_systems(
-        OnEnter(GameState::Dimension),
-        (init, resize_camera, |mut commands: Commands| {
-            let sword = commands.spawn(sword()).id();
-            commands.spawn(item_actor(sword)).add_child(sword);
-            let tnt = commands.spawn(tnt()).id();
-            commands.spawn(item_actor(tnt)).add_child(tnt);
-        })
-            .chain(),
-    );
-    app.add_systems(
-        Update,
-        (|mut commands: Commands,
-          mut player_inv: Single<(Entity, &PlayerInventory)>,
-          item_entities: Query<Entity, (With<ItemActor>, Without<PlayerInventory>)>| {
-            let (inv_entity, inv) = player_inv.deref_mut();
-            for item_entity in item_entities.iter() {
-                commands.move_item(
-                    ItemSource::item_actor(item_entity),
-                    ItemDestination::inventory_range(*inv_entity, 0..3, inv),
-                    ItemMoveQuantity::All,
-                );
-            }
-        })
-        .run_if(on_message::<KeyboardInput>),
-    );
+    app.add_systems(OnEnter(GameState::Dimension), (init, resize_camera).chain());
     app.add_systems(Update, resize_camera.run_if(on_message::<WindowResized>));
     app.add_systems(Update, update_player_camera);
     app.add_systems(Update, update_hotbar.after(process_input_hotbar));

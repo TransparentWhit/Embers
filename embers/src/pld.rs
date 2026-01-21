@@ -74,6 +74,10 @@ impl<'scope> PayloadScope<'scope> {
         .with_mode(NodeImageMode::Stretch)
     }
     #[inline]
+    pub fn default_model(&self, asset_server: &AssetServer) -> Handle<Scene> {
+        self.model(asset_server, "missingno", GltfAssetLabel::Scene(0))
+    }
+    #[inline]
     fn scene<'path>(
         &self,
         asset_server: &AssetServer,
