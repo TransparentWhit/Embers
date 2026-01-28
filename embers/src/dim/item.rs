@@ -10,6 +10,7 @@ use crate::utils::{Keyed, NamespacedKey, UntypedCmp, UntypedPartialCmp};
 use anyhow::Error;
 use avian3d::prelude::*;
 use bevy::ecs::system::{StaticSystemParam, SystemParam};
+use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
 use embers_macros::identify;
 use serde::{Deserialize, Serialize};
@@ -258,8 +259,9 @@ pub fn tnt() -> impl Bundle {
 }
 
 pub trait ItemComponent: Keyed + for<'world> UntypedCmp<EntityRef<'world>> + Send + Sync {
-    fn reset_registry(&self, world: &mut World);
-    fn register_prototype(&self, world: &mut World, item: NamespacedKey, value: Value);
+    fn clone(&self) -> Box<dyn ItemComponent>;
+    fn reset_registry(&self, world: &mut DeferredWorld);
+    fn register_prototype(&self, world: &mut DeferredWorld, item: NamespacedKey, value: Value);
 }
 
 impl RegistryBoxed<dyn ItemComponent> {
@@ -292,10 +294,18 @@ impl RegistryBoxed<dyn ItemComponent> {
         {
         }
         impl<C: Component + for<'de> Deserialize<'de> + Eq> ItemComponent for DefaultItemComponent<C> {
-            fn reset_registry(&self, world: &mut World) {
+            fn clone(&self) -> Box<dyn ItemComponent> {
+                Box::new(Self(self.0.clone(), PhantomData))
+            }
+            fn reset_registry(&self, world: &mut DeferredWorld) {
                 world.resource_mut::<Registry<C>>().clear();
             }
-            fn register_prototype(&self, world: &mut World, item: NamespacedKey, value: Value) {
+            fn register_prototype(
+                &self,
+                world: &mut DeferredWorld,
+                item: NamespacedKey,
+                value: Value,
+            ) {
                 world
                     .resource_mut::<Registry<C>>()
                     .register(item, C::deserialize(value).unwrap())
@@ -322,7 +332,7 @@ pub(super) fn plugin(app: &mut App) {
                     (|| {
                         item_action_templates.register(
                             NamespacedKey::new_embers("melee"),
-                            Box::new(|key: NamespacedKey, config: Table| {
+                            Box::new(|key, config| {
                                 #[derive(Deserialize)]
                                 struct Melee {
                                     damage: f32,
@@ -412,7 +422,7 @@ pub(super) fn plugin(app: &mut App) {
                         )?;
                         item_action_templates.register(
                             NamespacedKey::new_embers("charged_throw"),
-                            Box::new(|key: NamespacedKey, config: Table| {
+                            Box::new(|key, config| {
                                 #[derive(Deserialize)]
                                 struct ChargedThrow {
                                     wield: HandActionWield,

@@ -96,7 +96,7 @@ fn init(
                                 margin: UiRect::horizontal(px(3)),
                                 ..default()
                             },
-                            GLOBAL_PAYLOADS.image_node(&asset_server, "hotbar"),
+                            GLOBAL_PAYLOADS.ui_image(&asset_server, "hotbar"),
                             Children::spawn({
                                 let mut hotbar_slots = Vec::with_capacity(HOTBAR_SLOTS as usize);
                                 for i in 0..HOTBAR_SLOTS {
@@ -124,8 +124,7 @@ fn init(
                                             height: px(23),
                                             ..default()
                                         },
-                                        GLOBAL_PAYLOADS
-                                            .image_node(&asset_server, "hotbar_selection"),
+                                        GLOBAL_PAYLOADS.ui_image(&asset_server, "hotbar_selection"),
                                         HotbarSelection,
                                     )),
                                 )
@@ -138,7 +137,7 @@ fn init(
                                 margin: UiRect::horizontal(px(3)),
                                 ..default()
                             },
-                            GLOBAL_PAYLOADS.image_node(&asset_server, "main_hand"),
+                            GLOBAL_PAYLOADS.ui_image(&asset_server, "main_hand"),
                             children![(
                                 Node {
                                     left: px(1),

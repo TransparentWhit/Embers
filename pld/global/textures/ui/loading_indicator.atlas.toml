@@ -1,0 +1,4 @@
+type = "grid"
+tile = [16, 16]
+columns = 1
+rows = 8

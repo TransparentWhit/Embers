@@ -1,8 +1,10 @@
 use crate::GameState;
-use crate::pld::PayloadLoadedMessage;
+use crate::pld::{GLOBAL_PAYLOADS, PayloadLoadedMessage};
+use crate::ui::AnimatedImageNode;
 use bevy::app::App;
 use bevy::color::palettes::css::YELLOW;
 use bevy::prelude::*;
+use std::time::Duration;
 
 #[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 pub enum Loading {
@@ -22,7 +24,7 @@ impl Loading {
 
 pub fn set_next_state(next_state: GameState) {}
 
-fn init(mut commands: Commands) {
+fn init(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn((
         DespawnOnExit(GameState::Loading),
         Camera2d,
@@ -34,18 +36,42 @@ fn init(mut commands: Commands) {
             align_items: AlignItems::Center,
             ..default()
         },
-        children![(
-            Node {
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            children![(
-                Text::new("Loading..."),
-                TextFont { ..default() },
-                TextColor(YELLOW.into())
-            ),]
-        )],
+        children![
+            (
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                children![(
+                    Text::new("Loading..."),
+                    TextFont { ..default() },
+                    TextColor(YELLOW.into())
+                ),]
+            ),
+            (
+                Node {
+                    position_type: PositionType::Absolute,
+                    height: px(32),
+                    right: px(4),
+                    bottom: px(4),
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::End,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                children![(
+                    Node {
+                        width: px(32),
+                        height: px(32),
+                        ..default()
+                    },
+                    GLOBAL_PAYLOADS.ui_image(&asset_server, "loading_indicator"),
+                    AnimatedImageNode::new(0..8, Duration::from_millis(100)),
+                ),]
+            )
+        ],
     ));
 }
 

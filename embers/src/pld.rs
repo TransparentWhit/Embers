@@ -1,10 +1,12 @@
 //! *Payload*(pld)*s* are resources that the game uses during execution, such as assets or game data.
+//! *Shipment*(shp)*s* are their processed counterpart.
 
+pub mod atlas;
 pub mod meta;
 
-use crate::GameState;
 use crate::pld::meta::ReloadMetadata;
 use crate::utils::{ConstHashSet, Namespaced, NamespacedKey, const_hash_set};
+use crate::{ASSETS_ROOT, GameState};
 use bevy::app::App;
 use bevy::asset::{AssetPath, LoadedFolder};
 use bevy::prelude::*;
@@ -13,18 +15,16 @@ use std::sync::{LazyLock, Mutex};
 #[derive(Eq, PartialEq, Hash, Clone)]
 pub struct PayloadScope<'scope> {
     root: AssetPath<'scope>,
-    images_root: AssetPath<'scope>,
+    textures_root: AssetPath<'scope>,
     models_root: AssetPath<'scope>,
-    items_root: AssetPath<'scope>,
 }
 
 impl<'scope> PayloadScope<'scope> {
     pub fn new(root: impl Into<AssetPath<'scope>>) -> Self {
         let root = root.into();
         Self {
-            images_root: root.resolve("images").unwrap(),
+            textures_root: root.resolve("textures").unwrap(),
             models_root: root.resolve("models").unwrap(),
-            items_root: root.resolve("items").unwrap(),
             root,
         }
     }
@@ -57,25 +57,38 @@ impl<'scope> PayloadScope<'scope> {
         )
     }
     #[inline]
-    pub fn image_node<'path>(
+    pub fn ui_image<'path>(
         &self,
         asset_server: &AssetServer,
         path: impl Into<&'path str>,
     ) -> ImageNode {
-        ImageNode::new(self.image(asset_server, &*format!("ui/{}.png", path.into())))
+        self.image_node(asset_server, &*format!("ui/{}", path.into()))
             .with_mode(NodeImageMode::Stretch)
     }
     #[inline]
     pub fn item_image(&self, asset_server: &AssetServer, key: &NamespacedKey) -> ImageNode {
-        ImageNode::new(self.image(
+        self.image_node(
             asset_server,
-            &*format!("items/{}/{}.png", key.namespace(), key.key()),
-        ))
+            &*format!("items/{}/{}", key.namespace(), key.key()),
+        )
         .with_mode(NodeImageMode::Stretch)
     }
     #[inline]
     pub fn default_model(&self, asset_server: &AssetServer) -> Handle<Scene> {
         self.model(asset_server, "missingno", GltfAssetLabel::Scene(0))
+    }
+    #[inline]
+    fn image_node<'path>(
+        &self,
+        asset_server: &AssetServer,
+        path: impl Into<&'path str>,
+    ) -> ImageNode {
+        let (image, atlas) = self.texture(asset_server, path);
+        if let Some(atlas) = atlas {
+            ImageNode::from_atlas_image(image, atlas)
+        } else {
+            ImageNode::new(image)
+        }
     }
     #[inline]
     fn scene<'path>(
@@ -113,7 +126,35 @@ impl<'scope> PayloadScope<'scope> {
         asset_server: &AssetServer,
         path: impl Into<&'path str>,
     ) -> Handle<Image> {
-        asset_server.load(self.images_root.resolve(path.into()).unwrap())
+        asset_server.load(
+            self.textures_root
+                .resolve(&format!("{}.png", path.into()))
+                .unwrap(),
+        )
+    }
+    #[inline]
+    fn texture<'path>(
+        &self,
+        asset_server: &AssetServer,
+        path: impl Into<&'path str>,
+    ) -> (Handle<Image>, Option<TextureAtlas>) {
+        let path = path.into();
+        let atlas_path = self
+            .textures_root
+            .resolve(&format!("{}.atlas.toml", path))
+            .unwrap();
+        (
+            asset_server.load(
+                self.textures_root
+                    .resolve(&format!("{}.png", path))
+                    .unwrap(),
+            ),
+            if ASSETS_ROOT.get().unwrap().join(atlas_path.path()).exists() {
+                Some(TextureAtlas::from(asset_server.load(atlas_path)))
+            } else {
+                None
+            },
+        )
     }
     #[inline]
     fn model<'path, M: Asset>(
@@ -184,14 +225,13 @@ fn payload_unload_request_listener(
 
 fn folder_loaded_listener(
     mut commands: Commands,
-    reload_metadata: Res<ReloadMetadata>,
     mut folder_events: MessageReader<AssetEvent<LoadedFolder>>,
     mut messages: MessageWriter<PayloadLoadedMessage>,
 ) {
     for event in folder_events.read() {
         if let AssetEvent::LoadedWithDependencies { .. } = event {
             messages.write(PayloadLoadedMessage {});
-            commands.run_system(reload_metadata.system_id());
+            commands.trigger(ReloadMetadata);
         }
     }
 }
@@ -209,5 +249,6 @@ pub(super) fn plugin(app: &mut App) {
             ),
         )
         .add_systems(Update, (folder_loaded_listener,))
+        .add_plugins(atlas::plugin)
         .add_plugins(meta::plugin);
 }

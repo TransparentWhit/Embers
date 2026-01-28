@@ -14,6 +14,6 @@ pub fn dummy(asset_server: &AssetServer, attribute_bases: &Registry<AttributeBas
     (
         living_actor(&KEY, attribute_bases, false),
         Collider::cuboid(1., 3., 1.),
-        SceneRoot(LOBBY.assets().actor_scene(asset_server, &MODEL_KEY, 0)),
+        SceneRoot(LOBBY.payloads().actor_scene(asset_server, &MODEL_KEY, 0)),
     )
 }

@@ -1,5 +1,8 @@
-debug
-target
+target/
+shp/**
+!shp/**/
+!shp/.shipment_root
+!shp/**/*.meta
 **/*.rs.bk
 *.pdb
 **/mutants.out*/

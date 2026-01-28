@@ -1,4 +1,6 @@
 pub mod actor;
+pub mod block;
+mod chunk;
 pub mod item;
 
 use crate::dim::actor::living::player;
@@ -19,8 +21,77 @@ use bevy::time::Stopwatch;
 use bevy_hanabi::{EffectMaterial, ParticleEffect};
 use derive_where::derive_where;
 use embers_macros::identify;
+use serde::{Deserialize, Serialize};
+use std::ops::Neg;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
+
+#[derive(Deserialize, Serialize, Copy, Clone, Debug, Eq, Hash, PartialEq)]
+pub enum Direction {
+    None,
+    East,
+    West,
+    Up,
+    Down,
+    South,
+    North,
+}
+
+impl Direction {
+    #[inline]
+    pub const fn is_cartesian(&self) -> bool {
+        matches!(
+            self,
+            Self::East | Self::West | Self::Up | Self::Down | Self::South | Self::North
+        )
+    }
+}
+
+impl Neg for Direction {
+    type Output = Self;
+    #[inline]
+    fn neg(self) -> Self::Output {
+        match self {
+            Self::None => Self::None,
+            Self::East => Self::West,
+            Self::West => Self::East,
+            Self::Up => Self::Down,
+            Self::Down => Self::Up,
+            Self::South => Self::North,
+            Self::North => Self::South,
+        }
+    }
+}
+
+impl From<Direction> for Vec3 {
+    #[inline]
+    fn from(value: Direction) -> Self {
+        match value {
+            Direction::None => Self::ZERO,
+            Direction::East => Self::X,
+            Direction::West => Self::NEG_X,
+            Direction::Up => Self::Y,
+            Direction::Down => Self::NEG_Y,
+            Direction::North => Self::Z,
+            Direction::South => Self::NEG_Z,
+        }
+    }
+}
+
+impl From<Direction> for IVec3 {
+    #[inline]
+    fn from(value: Direction) -> Self {
+        match value {
+            Direction::None => Self::ZERO,
+            Direction::East => Self::X,
+            Direction::West => Self::NEG_X,
+            Direction::Up => Self::Y,
+            Direction::Down => Self::NEG_Y,
+            Direction::North => Self::Z,
+            Direction::South => Self::NEG_Z,
+        }
+    }
+}
 
 type Physics = (CollisionLayers, Dominance, LockedAxes, RigidBody);
 
@@ -467,7 +538,7 @@ impl Default for Time {
 
 pub struct Dimension {
     key: NamespacedKey,
-    assets: PayloadScope<'static>,
+    payloads: PayloadScope<'static>,
 }
 
 impl Keyed for Dimension {
@@ -479,12 +550,12 @@ impl Keyed for Dimension {
 impl Dimension {
     pub fn new(key: NamespacedKey) -> Self {
         Self {
-            assets: PayloadScope::new(format!("dim/{}/{}", key.namespace(), key.key())),
+            payloads: PayloadScope::new(format!("dim/{}/{}", key.namespace(), key.key())),
             key,
         }
     }
-    pub fn assets(&self) -> &PayloadScope<'_> {
-        &self.assets
+    pub fn payloads(&self) -> &PayloadScope<'_> {
+        &self.payloads
     }
 }
 
@@ -523,6 +594,7 @@ pub(super) fn plugin(app: &mut App) {
             },
         )
         .add_plugins(actor::plugin)
+        .add_plugins(block::plugin)
         .add_plugins(item::plugin)
         .add_plugins(player::plugin);
 }

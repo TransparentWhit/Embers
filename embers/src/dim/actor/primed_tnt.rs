@@ -62,7 +62,7 @@ pub(in crate::dim::actor) fn fuse(
                     ),
                 ),
                 EffectMaterial {
-                    images: vec![asset_server.load("global/images/particles/explosion_10.png")],
+                    images: vec![asset_server.load("global/textures/particles/explosion_10.png")],
                 },
                 *transform,
             ));

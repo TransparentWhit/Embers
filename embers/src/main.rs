@@ -10,16 +10,23 @@ pub mod utils;
 use avian3d::PhysicsPlugins;
 use avian3d::prelude::PhysicsSchedule;
 use bevy::DefaultPlugins;
+use bevy::asset::UnapprovedPathMode;
 use bevy::image::ImageSamplerDescriptor;
+use bevy::log::{Level, LogPlugin};
 use bevy::prelude::*;
-use bevy::winit::WINIT_WINDOWS;
+use bevy::window::WindowTheme;
 use bevy_hanabi::HanabiPlugin;
 use bevy_tnua::prelude::TnuaControllerPlugin;
 use bevy_tnua_avian3d::TnuaAvian3dPlugin;
-use std::path::MAIN_SEPARATOR_STR;
-use winit::window::Icon;
+use std::env::current_exe;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub static UNPROCESSED_ASSETS_ROOT: OnceLock<PathBuf> = OnceLock::new();
+
+pub static ASSETS_ROOT: OnceLock<PathBuf> = OnceLock::new();
 
 #[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 enum GameState {
@@ -29,58 +36,90 @@ enum GameState {
     MainMenu,
 }
 
+fn find_resources_root(folder: &str, marker: &str) -> Option<PathBuf> {
+    let mut path = current_exe().unwrap();
+    while let Ok(destination) = path.read_link() {
+        path = destination;
+    }
+    while path.pop() {
+        let resources = path.join(folder);
+        if resources.is_dir() && resources.join(marker).exists() {
+            return Some(resources);
+        }
+    }
+    None
+}
+
 // TODO: The initial loading logic is a bit messy. Someone refactor it later
 // asset.rs initiates global asset loading at StartUp,
 // when it completes it sends a message which gets received by loading_screen.rs,
 // then somehow correctly switches to main screen because GameState and Loading happen to be in the correct default states
 fn main() {
-    App::new()
-        .add_plugins(
-            DefaultPlugins
-                .set(AssetPlugin {
-                    file_path: ["..", "pld"].join(MAIN_SEPARATOR_STR),
-                    ..default()
-                })
-                .set(ImagePlugin {
-                    default_sampler: ImageSamplerDescriptor::nearest(),
+    let mut app = App::new();
+    app.add_plugins(LogPlugin {
+        level: Level::INFO,
+        ..default()
+    });
+    UNPROCESSED_ASSETS_ROOT
+        .set(
+            find_resources_root("pld", ".payload_root")
+                .inspect(|path| info!("Found payload root: {}", path.display()))
+                .unwrap_or_else(|| {
+                    #[cfg(debug_assertions)]
+                    warn!("Could not find payload root!");
+                    Path::new("pld").to_path_buf()
                 }),
         )
-        .add_plugins(HanabiPlugin)
-        .add_plugins(
-            PhysicsPlugins::default().with_collision_hooks::<dim::SourceExclusionCollisionHooks>(),
+        .unwrap();
+    ASSETS_ROOT
+        .set(
+            find_resources_root("shp", ".shipment_root")
+                .inspect(|path| info!("Found shipment root: {}", path.display()))
+                .unwrap_or_else(|| {
+                    warn!("Could not find shipment root!");
+                    Path::new("shp").to_path_buf()
+                }),
         )
-        .add_plugins(TnuaControllerPlugin::new(PhysicsSchedule))
-        .add_plugins(TnuaAvian3dPlugin::new(PhysicsSchedule))
-        .add_plugins(dim::plugin)
-        .add_plugins(input::plugin)
-        .add_plugins(pld::plugin)
-        .add_plugins(ui::plugin)
-        .add_systems(
-            Startup,
-            |asset_images: Res<Assets<Image>>,
-             asset_server: Res<AssetServer>,
-             mut windows: Query<(Entity, &mut Window)>| {
-                WINIT_WINDOWS.with_borrow(|winit_windows| {
-                    for (window_entity, mut window) in windows.iter_mut() {
-                        window.visible = true;
-                        if let Some(winit_window) = winit_windows.get_window(window_entity) {
-                            if let Some(window_icon) =
-                                asset_images.get(&asset_server.load("global/icon.png"))
-                            {
-                                winit_window.set_window_icon(
-                                    Icon::from_rgba(
-                                        window_icon.data.clone().unwrap(),
-                                        window_icon.width(),
-                                        window_icon.height(),
-                                    )
-                                    .ok(),
-                                );
-                            }
-                        }
-                    }
-                });
-            },
-        )
-        .init_state::<GameState>()
-        .run();
+        .unwrap();
+    app.add_plugins(
+        DefaultPlugins
+            .build()
+            .set(AssetPlugin {
+                file_path: UNPROCESSED_ASSETS_ROOT
+                    .get()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string(),
+                processed_file_path: ASSETS_ROOT.get().unwrap().to_string_lossy().to_string(),
+                mode: AssetMode::Processed,
+                unapproved_path_mode: UnapprovedPathMode::Deny,
+                ..default()
+            })
+            .set(ImagePlugin {
+                default_sampler: ImageSamplerDescriptor::nearest(),
+                ..default()
+            })
+            .disable::<LogPlugin>()
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Embers".to_string(),
+                    window_theme: Some(WindowTheme::Dark),
+                    visible: false,
+                    ..default()
+                }),
+                ..default()
+            }),
+    )
+    .add_plugins(HanabiPlugin)
+    .add_plugins(
+        PhysicsPlugins::default().with_collision_hooks::<dim::SourceExclusionCollisionHooks>(),
+    )
+    .add_plugins(TnuaControllerPlugin::new(PhysicsSchedule))
+    .add_plugins(TnuaAvian3dPlugin::new(PhysicsSchedule))
+    .add_plugins(dim::plugin)
+    .add_plugins(input::plugin)
+    .add_plugins(pld::plugin)
+    .add_plugins(ui::plugin)
+    .init_state::<GameState>()
+    .run();
 }

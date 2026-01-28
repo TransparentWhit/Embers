@@ -5,7 +5,14 @@ authors.workspace = true
 edition.workspace = true
 
 [features]
-dev = ["bevy/bevy_dev_tools", "bevy/debug", "bevy/dynamic_linking", "bevy/file_watcher"]
+dev = [
+    "bevy/asset_processor",
+    "bevy/bevy_dev_tools",
+    "bevy/debug",
+    "bevy/dynamic_linking",
+    "bevy/embedded_watcher",
+    "bevy/file_watcher",
+]
 
 [dependencies]
 embers-macros = { path = "../embers-macros" }

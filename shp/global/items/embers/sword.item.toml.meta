@@ -1,0 +1,12 @@
+(
+    meta_format_version: "1.0",
+    processed_info: Some((
+        hash: (14, 176, 23, 160, 170, 200, 184, 183, 49, 58, 88, 159, 140, 23, 170, 54, 137, 232, 70, 33, 24, 152, 29, 91, 218, 236, 36, 129, 42, 145, 90, 175),
+        full_hash: (14, 176, 23, 160, 170, 200, 184, 183, 49, 58, 88, 159, 140, 23, 170, 54, 137, 232, 70, 33, 24, 152, 29, 91, 218, 236, 36, 129, 42, 145, 90, 175),
+        process_dependencies: [],
+    )),
+    asset: Load(
+        loader: "embers::pld::meta::RawMetadataLoader<embers::pld::meta::ItemPrototype>",
+        settings: (),
+    ),
+)

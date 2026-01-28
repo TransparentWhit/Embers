@@ -1,7 +1,7 @@
 use crate::utils::{Keyed, NamespacedKey};
 use bevy::prelude::*;
-use bevy::tasks::futures_lite::StreamExt;
 use delegate::delegate;
+use derive_where::derive_where;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::iter::{Empty, Map, empty, once};
 use std::marker::PhantomData;
@@ -142,7 +142,7 @@ pub enum RegistryTagItem {
 /// - **Registry State**: Indices are only valid when the registry is frozen.
 ///
 /// See also: [TagIndex]
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+#[derive_where(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ValueIndex<T> {
     index: usize,
     #[cfg(debug_assertions)]
@@ -174,7 +174,7 @@ pub type BoxedValueIndex<T> = ValueIndex<Box<T>>;
 /// - **Registry State**: Indices are only valid when the registry is frozen.
 ///
 /// See also: [ValueIndex]
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+#[derive_where(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub struct TagIndex<T> {
     index: usize,
     #[cfg(debug_assertions)]

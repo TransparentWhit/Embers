@@ -1,0 +1,12 @@
+(
+    meta_format_version: "1.0",
+    processed_info: Some((
+        hash: (146, 193, 107, 79, 74, 152, 114, 59, 138, 47, 113, 45, 255, 179, 81, 161, 134, 176, 88, 217, 22, 197, 129, 4, 2, 69, 153, 66, 5, 26, 84, 136),
+        full_hash: (146, 193, 107, 79, 74, 152, 114, 59, 138, 47, 113, 45, 255, 179, 81, 161, 134, 176, 88, 217, 22, 197, 129, 4, 2, 69, 153, 66, 5, 26, 84, 136),
+        process_dependencies: [],
+    )),
+    asset: Load(
+        loader: "embers::pld::meta::RawMetadataLoader<embers::pld::meta::ActorBase>",
+        settings: (),
+    ),
+)

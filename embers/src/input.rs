@@ -78,7 +78,7 @@ impl Default for DoubleClicks {
 }
 
 impl DoubleClicks {
-    const THRESHOLD: Duration = Duration::from_millis(312);
+    const THRESHOLD: Duration = Duration::from_millis(227);
     pub fn double_clicked(&self, input: InputButton) -> bool {
         self.double_clicked.contains(&input)
     }

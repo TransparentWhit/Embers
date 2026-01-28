@@ -1,0 +1,12 @@
+(
+    meta_format_version: "1.0",
+    processed_info: Some((
+        hash: (91, 159, 122, 165, 26, 30, 36, 133, 34, 190, 17, 53, 29, 182, 101, 54, 164, 239, 142, 183, 215, 176, 211, 55, 250, 10, 164, 228, 77, 54, 51, 92),
+        full_hash: (91, 159, 122, 165, 26, 30, 36, 133, 34, 190, 17, 53, 29, 182, 101, 54, 164, 239, 142, 183, 215, 176, 211, 55, 250, 10, 164, 228, 77, 54, 51, 92),
+        process_dependencies: [],
+    )),
+    asset: Load(
+        loader: "embers::pld::meta::RawMetadataLoader<embers::pld::meta::ParticleMeta>",
+        settings: (),
+    ),
+)

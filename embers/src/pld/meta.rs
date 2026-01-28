@@ -1,12 +1,14 @@
 use crate::dim::Particles;
 use crate::dim::actor::living::AttributeBase;
+use crate::dim::block::{BlockCollider, BlockModel};
 use crate::dim::item::{ItemAction, ItemActionTemplate, ItemComponent};
-use crate::reg::{RegBoxed, RegMut, Registry, RegistryBoxed};
+use crate::reg::{RegBoxed, RegMut, RegistryBoxed};
 use crate::utils::{NamespacedKey, path_to_unix_components};
 use anyhow::Error;
 use bevy::asset::io::Reader;
 use bevy::asset::{AssetLoader, AssetServer, LoadContext};
-use bevy::ecs::system::{SystemId, SystemState};
+use bevy::ecs::system::{StaticSystemInput, StaticSystemParam, SystemParam};
+use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
 use regex::Regex;
 use serde::Deserialize;
@@ -14,15 +16,6 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::LazyLock;
 use toml::{Table, from_slice};
-
-#[derive(Resource)]
-pub struct ReloadMetadata(SystemId);
-
-impl ReloadMetadata {
-    pub fn system_id(&self) -> SystemId {
-        self.0
-    }
-}
 
 static ACTOR_BASE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"actors/(?P<namespace>[A-Za-z0-9_]+)(?P<key>(?:/[A-Za-z0-9_]+)+)\.actor\.toml$")
@@ -32,7 +25,17 @@ static ACTOR_BASE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 #[derive(Asset, Debug, Deserialize, TypePath)]
 struct ActorBase {
     #[serde(default)]
-    attributes: Option<HashMap<NamespacedKey, f32>>,
+    attributes: HashMap<NamespacedKey, f32>,
+}
+
+static BLOCK_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"blocks/(?P<namespace>[A-Za-z0-9_]+)(?P<key>(?:/[A-Za-z0-9_]+)+)\.block\.toml$")
+        .unwrap()
+});
+
+#[derive(Asset, Debug, Deserialize, TypePath)]
+struct BlockMeta {
+    //model: BlockModel,
 }
 
 static ITEM_ACTION_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
@@ -61,6 +64,20 @@ static PARTICLE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
+static VOXEL_MODEL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"models/voxels/(?P<namespace>[A-Za-z0-9_]+)(?P<key>(?:/[A-Za-z0-9_]+)+)\.voxel\.toml$",
+    )
+    .unwrap()
+});
+
+#[derive(Asset, Debug, Deserialize, TypePath)]
+struct VoxelModel {
+    parent: Option<NamespacedKey>,
+    #[serde(default)]
+    images: HashMap<String, NamespacedKey>,
+}
+
 #[derive(Asset, Debug, Deserialize, TypePath)]
 struct ParticleMeta {
     /*max_particles: u32,
@@ -85,6 +102,7 @@ impl AssetLoader for TextureAtlasMetadataLoader {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await?;
         #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case", tag = "type")]
         enum TextureAtlasPreset {
             Grid {
                 tile: UVec2,
@@ -144,160 +162,200 @@ impl<M: Asset + for<'de> Deserialize<'de>> AssetLoader for RawMetadataLoader<M> 
     }
 }
 
-pub fn reload_metadata(
-    world: &mut World,
-    state: &mut SystemState<(
-        Res<AssetServer>,
-        (Res<Assets<ActorBase>>, RegMut<AttributeBase>),
-        (
-            Res<Assets<ItemActionMeta>>,
-            RegBoxed<dyn ItemActionTemplate>,
-            RegMut<ItemAction>,
-        ),
-        Res<Assets<ItemPrototype>>,
-        (Res<Assets<ParticleMeta>>, RegMut<Particles>),
-    )>,
-) {
-    let (
-        asset_server,
-        (actor_bases, mut attribute_bases),
-        (item_action_metas, item_action_templates, mut item_actions),
-        item_prototypes,
-        (particle_metas, mut particles),
-    ) = state.get_mut(world);
-    fn process_meta<M: Asset>(
-        asset_server: &AssetServer,
-        metadata: &Assets<M>,
-        path_pattern: &Regex,
-        r#type: &str,
-        parse: &mut impl FnMut(NamespacedKey, &M),
-    ) {
-        for (id, meta) in metadata.iter() {
-            let path = path_to_unix_components(asset_server.get_path(id).unwrap().path());
-            parse(
-                match path_pattern.captures(&path) {
-                    Some(captures) => NamespacedKey::new(
-                        captures.name("namespace").unwrap().as_str(),
-                        &captures.name("key").unwrap().as_str()[1..],
-                    ),
-                    None => {
-                        error!("Failed to resolve {} key for path {}", r#type, path);
-                        continue;
+#[derive(Event)]
+pub struct ReloadMetadata;
+
+fn reload_metadata_plugin(app: &mut App) {
+    fn process_meta<D: SystemInput + 'static, M: Asset, P: SystemParam + 'static>(
+        path_pattern: &'static Regex,
+        r#type: &'static str,
+        parse: fn(NamespacedKey, &M, &mut P::Item<'_, '_>, &mut D::Inner<'_>),
+    ) -> impl System<In = In<StaticSystemInput<'static, D>>, Out = D::Inner<'static>> {
+        IntoSystem::into_system(
+            move |In(mut data): In<StaticSystemInput<'static, D>>,
+                  asset_server: Res<AssetServer>,
+                  metadata: Res<Assets<M>>,
+                  extra: StaticSystemParam<P>| {
+                let mut extra = extra.into_inner();
+                for (id, meta) in metadata.iter() {
+                    let path = path_to_unix_components(asset_server.get_path(id).unwrap().path());
+                    parse(
+                        match path_pattern.captures(&path) {
+                            Some(captures) => NamespacedKey::new(
+                                captures.name("namespace").unwrap().as_str(),
+                                &captures.name("key").unwrap().as_str()[1..],
+                            ),
+                            None => {
+                                error!("Failed to resolve {} key for path {}", r#type, path);
+                                continue;
+                            }
+                        },
+                        meta,
+                        &mut extra,
+                        &mut data.0,
+                    );
+                }
+                info!("Found {} {}(s).", metadata.len(), r#type);
+                data.0
+            },
+        )
+    }
+    app.add_observer(
+        (|_on_reload_metadata: On<ReloadMetadata>, mut attribute_bases: RegMut<AttributeBase>| {
+            attribute_bases.clear();
+            StaticSystemInput(())
+        })
+        .pipe(process_meta::<(), ActorBase, RegMut<AttributeBase>>(
+            &ACTOR_BASE_PATTERN,
+            "actor_base",
+            |key, base, attribute_bases, ()| {
+                attribute_bases
+                    .register(key, AttributeBase::new(base.attributes.clone()))
+                    .expect("Failed to register attribute bases");
+            },
+        )),
+    )
+    .add_observer(
+        (|_on_reload_metadata: On<ReloadMetadata>,
+          mut block_colliders: RegMut<BlockCollider>,
+          mut block_models: RegMut<BlockModel>| {
+            block_colliders.clear();
+            block_models.clear();
+            StaticSystemInput(())
+        })
+        .pipe(process_meta::<
+            (),
+            BlockMeta,
+            (RegMut<BlockCollider>, RegMut<BlockModel>),
+        >(
+            &BLOCK_PATTERN,
+            "block",
+            |key, block, (block_colliders, block_models), ()| {},
+        )),
+    )
+    .add_observer(
+        (|_on_reload_metadata: On<ReloadMetadata>, mut item_actions: RegMut<ItemAction>| {
+            item_actions.clear();
+            StaticSystemInput(())
+        })
+        .pipe(process_meta::<
+            (),
+            ItemActionMeta,
+            (RegBoxed<dyn ItemActionTemplate>, RegMut<ItemAction>),
+        >(
+            &ITEM_ACTION_PATTERN,
+            "item action",
+            |key, action, (item_action_templates, item_actions), ()| match item_action_templates
+                .get(&action.template)
+            {
+                Some(template) => {
+                    item_actions
+                        .register_keyed(
+                            template
+                                .create(key, action.config.clone())
+                                .expect("Failed to apply item action template"),
+                        )
+                        .expect("Failed to register item action");
+                }
+                None => error!("Unknown item action template: {}", action.template),
+            },
+        )),
+    )
+    .add_observer(
+        (|_on_reload_metadata: On<ReloadMetadata>| StaticSystemInput(Vec::new()))
+            .pipe(process_meta::<In<Vec<_>>, ItemPrototype, ()>(
+                &ITEM_PROTOTYPE_PATTERN,
+                "item prototype",
+                |key, prototype, (), item_prototype_components| {
+                    for (component, value) in &prototype.0 {
+                        let component =
+                            match NamespacedKey::try_from_with_embers(component.as_str()) {
+                                Ok(key) => key,
+                                Err(err) => {
+                                    error!("Invalid item component key in {}: {}", key, err);
+                                    continue;
+                                }
+                            };
+                        item_prototype_components.push((
+                            key.clone(),
+                            component.clone(),
+                            value.clone(),
+                        ));
                     }
                 },
-                meta,
-            );
-        }
-        info!("Found {} {}(s).", metadata.len(), r#type);
-    }
-    attribute_bases.clear();
-    process_meta(
-        &asset_server,
-        &actor_bases,
-        &ACTOR_BASE_PATTERN,
-        "actor base",
-        &mut |key, base| {
-            attribute_bases
-                .register(
-                    key,
-                    AttributeBase::new(base.attributes.as_ref().cloned().unwrap_or_default()),
-                )
-                .expect("Failed to register attribute bases");
-        },
-    );
-    item_actions.clear();
-    process_meta(
-        &asset_server,
-        &item_action_metas,
-        &ITEM_ACTION_PATTERN,
-        "item action",
-        &mut |key, action| match item_action_templates.get(&action.template) {
-            Some(template) => {
-                item_actions
-                    .register_keyed(
-                        template
-                            .create(key, action.config.clone())
-                            .expect("Failed to apply item action template"),
-                    )
-                    .expect("Failed to register item action");
-            }
-            None => error!("Unknown item action template: {}", action.template),
-        },
-    );
-    let mut item_prototype_components = Vec::new();
-    process_meta(
-        &asset_server,
-        &item_prototypes,
-        &ITEM_PROTOTYPE_PATTERN,
-        "item prototype",
-        &mut |key, prototype| {
-            for (component, value) in &prototype.0 {
-                let component = match NamespacedKey::try_from_with_embers(component.as_str()) {
-                    Ok(key) => key,
-                    Err(err) => {
-                        error!("Invalid item component key in {}: {}", key, err);
-                        continue;
-                    }
-                };
-                item_prototype_components.push((key.clone(), component.clone(), value.clone()));
-            }
-        },
-    );
-    /*process_meta(
-        &asset_server,
-        &particle_metas,
-        &PARTICLE_PATTERN,
-        "particle",
-        &mut |key, particle| {
-            let mut module = Module::default();
-            let lifetime = SetAttributeModifier::new(Attribute::LIFETIME, module.lit(3.));
-            particles
-                .register(
-                    key.clone(),
-                    Particles::new(
-                        ParticleEffect::new(
-                            asset_server.add(
-                                EffectAsset::new(
-                                    particle.max_particles,
-                                    SpawnerSettings::new(
-                                        particle.spawn_count.into(),
-                                        particle.spawn_duration_secs.into(),
-                                        particle.spawn_period_secs.into(),
-                                        particle.spawn_cycles,
-                                    ),
-                                    module,
-                                )
-                                .init(lifetime)
-                                .with_name(key),
-                            ),
+            ))
+            .pipe(|In(item_prototype_components), mut world: DeferredWorld| {
+                for item_component in world
+                    .resource::<RegistryBoxed<dyn ItemComponent>>()
+                    .values()
+                    .map(|item_component| (*item_component).clone())
+                    .collect::<Box<[_]>>()
+                {
+                    item_component.reset_registry(&mut world);
+                }
+                for (item, item_component, value) in item_prototype_components {
+                    match world
+                        .resource::<RegistryBoxed<dyn ItemComponent>>()
+                        .get(&item_component)
+                    {
+                        Some(item_component) => {
+                            (*item_component)
+                                .clone()
+                                .register_prototype(&mut world, item, value);
+                        }
+                        None => error!(
+                            "Unknown item component key in prototype '{}': {}",
+                            item, item_component,
                         ),
-                        EffectMaterial { images: vec![] },
-                    ),
-                )
-                .expect("Failed to register particle");
-        },
-    );*/
-    world.resource_scope::<RegistryBoxed<dyn ItemComponent>, ()>(|world, item_components| {
-        for item_component in item_components.values() {
-            item_component.reset_registry(world);
-        }
-        for (item, item_component, value) in item_prototype_components {
-            match item_components.get(&item_component) {
-                Some(item_component) => item_component.register_prototype(world, item, value),
-                None => error!(
-                    "Unknown item component key in prototype '{}': {}",
-                    item, item_component,
-                ),
-            }
-        }
-    });
-    info!("Finished loading metadata.");
+                    }
+                }
+            }),
+    )
+    .add_observer(
+        (|_on_reload_metadata: On<ReloadMetadata>, mut particles: RegMut<Particles>| {
+            particles.clear();
+            StaticSystemInput(())
+        })
+        .pipe(process_meta::<(), ParticleMeta, RegMut<Particles>>(
+            &PARTICLE_PATTERN,
+            "particle",
+            |key, particle, particles, ()| {
+                /*let mut module = Module::default();
+                let lifetime = SetAttributeModifier::new(Attribute::LIFETIME, module.lit(3.));
+                particles
+                    .register(
+                        key.clone(),
+                        Particles::new(
+                            ParticleEffect::new(
+                                asset_server.add(
+                                    EffectAsset::new(
+                                        particle.max_particles,
+                                        SpawnerSettings::new(
+                                            particle.spawn_count.into(),
+                                            particle.spawn_duration_secs.into(),
+                                            particle.spawn_period_secs.into(),
+                                            particle.spawn_cycles,
+                                        ),
+                                        module,
+                                    )
+                                    .init(lifetime)
+                                    .with_name(key),
+                                ),
+                            ),
+                            EffectMaterial { images: vec![] },
+                        ),
+                    )
+                    .expect("Failed to register particle");*/
+            },
+        )),
+    );
 }
 
 pub(super) fn plugin(app: &mut App) {
-    let reload_metadata = ReloadMetadata(app.register_system(reload_metadata));
     app.init_asset::<ActorBase>()
         .register_asset_loader(RawMetadataLoader::<ActorBase>::new(&["actor.toml"]))
+        .init_asset::<BlockMeta>()
+        .register_asset_loader(RawMetadataLoader::<BlockMeta>::new(&["block.toml"]))
         .init_asset::<ItemActionMeta>()
         .register_asset_loader(RawMetadataLoader::<ItemActionMeta>::new(&[
             "item_action.toml",
@@ -307,5 +365,5 @@ pub(super) fn plugin(app: &mut App) {
         .init_asset::<ParticleMeta>()
         .register_asset_loader(RawMetadataLoader::<ParticleMeta>::new(&["particle.toml"]))
         .register_asset_loader(TextureAtlasMetadataLoader)
-        .insert_resource(reload_metadata);
+        .add_plugins(reload_metadata_plugin);
 }
