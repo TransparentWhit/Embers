@@ -410,11 +410,11 @@ mod tests {
         let mut double_clicks = DoubleClicks::default();
         let input = DummyInput::Input1.into();
         let mut stopwatch = Stopwatch::new();
-        stopwatch.tick(Duration::from_millis(100));
+        stopwatch.tick(Duration::from_millis(50));
         double_clicks.clicks.insert(input, stopwatch);
-        double_clicks.tick(Duration::from_millis(150));
+        double_clicks.tick(Duration::from_millis(100));
         assert!(double_clicks.clicks.contains_key(&input));
-        double_clicks.tick(Duration::from_millis(200));
+        double_clicks.tick(Duration::from_millis(150));
         assert!(!double_clicks.clicks.contains_key(&input));
     }
 
