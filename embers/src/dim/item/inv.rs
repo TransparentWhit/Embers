@@ -23,7 +23,7 @@ impl<const N: usize, M: Marker> Default for Inventory<N, M> {
 
 impl<const N: usize, M: Marker> Inventory<N, M> {
     pub fn new() -> Self {
-        Default::default()
+        default()
     }
 }
 

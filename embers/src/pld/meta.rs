@@ -3,6 +3,7 @@ use crate::dim::actor::living::AttributeBase;
 use crate::dim::block::{BlockCollider, BlockModel};
 use crate::dim::item::{ItemAction, ItemActionTemplate, ItemComponent};
 use crate::reg::{RegBoxed, RegMut, RegistryBoxed};
+use crate::ui::TextureAtlasAnimation;
 use crate::utils::{NamespacedKey, path_to_unix_components};
 use anyhow::Error;
 use bevy::asset::io::Reader;
@@ -96,7 +97,7 @@ impl AssetLoader for TextureAtlasMetadataLoader {
     async fn load(
         &self,
         reader: &mut dyn Reader,
-        _settings: &Self::Settings,
+        (): &Self::Settings,
         _load_context: &mut LoadContext<'_>,
     ) -> Result<Self::Asset, Self::Error> {
         let mut bytes = Vec::new();
@@ -150,7 +151,7 @@ impl<M: Asset + for<'de> Deserialize<'de>> AssetLoader for RawMetadataLoader<M> 
     async fn load(
         &self,
         reader: &mut dyn Reader,
-        _settings: &Self::Settings,
+        (): &Self::Settings,
         _load_context: &mut LoadContext<'_>,
     ) -> Result<Self::Asset, Self::Error> {
         let mut bytes = Vec::new();
@@ -353,17 +354,20 @@ fn reload_metadata_plugin(app: &mut App) {
 
 pub(super) fn plugin(app: &mut App) {
     app.init_asset::<ActorBase>()
-        .register_asset_loader(RawMetadataLoader::<ActorBase>::new(&["actor.toml"]))
         .init_asset::<BlockMeta>()
-        .register_asset_loader(RawMetadataLoader::<BlockMeta>::new(&["block.toml"]))
         .init_asset::<ItemActionMeta>()
+        .init_asset::<ItemPrototype>()
+        .init_asset::<ParticleMeta>()
+        .register_asset_loader(RawMetadataLoader::<ActorBase>::new(&["actor.toml"]))
+        .register_asset_loader(RawMetadataLoader::<BlockMeta>::new(&["block.toml"]))
         .register_asset_loader(RawMetadataLoader::<ItemActionMeta>::new(&[
             "item_action.toml",
         ]))
-        .init_asset::<ItemPrototype>()
         .register_asset_loader(RawMetadataLoader::<ItemPrototype>::new(&["item.toml"]))
-        .init_asset::<ParticleMeta>()
         .register_asset_loader(RawMetadataLoader::<ParticleMeta>::new(&["particle.toml"]))
         .register_asset_loader(TextureAtlasMetadataLoader)
+        .register_asset_loader(RawMetadataLoader::<TextureAtlasAnimation>::new(&[
+            "atlas_animation.toml",
+        ]))
         .add_plugins(reload_metadata_plugin);
 }

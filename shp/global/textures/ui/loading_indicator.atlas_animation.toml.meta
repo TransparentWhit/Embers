@@ -1,0 +1,12 @@
+(
+    meta_format_version: "1.0",
+    processed_info: Some((
+        hash: (238, 221, 142, 54, 99, 149, 9, 238, 9, 27, 122, 77, 169, 151, 189, 194, 214, 218, 139, 16, 201, 47, 112, 95, 122, 28, 76, 228, 207, 155, 119, 29),
+        full_hash: (238, 221, 142, 54, 99, 149, 9, 238, 9, 27, 122, 77, 169, 151, 189, 194, 214, 218, 139, 16, 201, 47, 112, 95, 122, 28, 76, 228, 207, 155, 119, 29),
+        process_dependencies: [],
+    )),
+    asset: Load(
+        loader: "embers::pld::meta::RawMetadataLoader<embers::ui::TextureAtlasAnimation>",
+        settings: (),
+    ),
+)

@@ -5,6 +5,7 @@ pub mod atlas;
 pub mod meta;
 
 use crate::pld::meta::ReloadMetadata;
+use crate::ui::AnimatedTextureAtlas;
 use crate::utils::{ConstHashSet, Namespaced, NamespacedKey, const_hash_set};
 use crate::{ASSETS_ROOT, GameState};
 use bevy::app::App;
@@ -61,17 +62,21 @@ impl<'scope> PayloadScope<'scope> {
         &self,
         asset_server: &AssetServer,
         path: impl Into<&'path str>,
-    ) -> ImageNode {
-        self.image_node(asset_server, &*format!("ui/{}", path.into()))
-            .with_mode(NodeImageMode::Stretch)
+    ) -> (ImageNode, AnimatedTextureAtlas) {
+        let (node, animated) = self.image_node(asset_server, &*format!("ui/{}", path.into()));
+        (node.with_mode(NodeImageMode::Stretch), animated)
     }
     #[inline]
-    pub fn item_image(&self, asset_server: &AssetServer, key: &NamespacedKey) -> ImageNode {
-        self.image_node(
+    pub fn item_image(
+        &self,
+        asset_server: &AssetServer,
+        key: &NamespacedKey,
+    ) -> (ImageNode, AnimatedTextureAtlas) {
+        let (node, animated) = self.image_node(
             asset_server,
             &*format!("items/{}/{}", key.namespace(), key.key()),
-        )
-        .with_mode(NodeImageMode::Stretch)
+        );
+        (node.with_mode(NodeImageMode::Stretch), animated)
     }
     #[inline]
     pub fn default_model(&self, asset_server: &AssetServer) -> Handle<Scene> {
@@ -82,12 +87,12 @@ impl<'scope> PayloadScope<'scope> {
         &self,
         asset_server: &AssetServer,
         path: impl Into<&'path str>,
-    ) -> ImageNode {
-        let (image, atlas) = self.texture(asset_server, path);
-        if let Some(atlas) = atlas {
-            ImageNode::from_atlas_image(image, atlas)
+    ) -> (ImageNode, AnimatedTextureAtlas) {
+        let (image, animated_atlas) = self.animated_texture(asset_server, path);
+        if let Some((atlas, animated)) = animated_atlas {
+            (ImageNode::from_atlas_image(image, atlas), animated)
         } else {
-            ImageNode::new(image)
+            (ImageNode::new(image), default())
         }
     }
     #[inline]
@@ -133,15 +138,19 @@ impl<'scope> PayloadScope<'scope> {
         )
     }
     #[inline]
-    fn texture<'path>(
+    fn animated_texture<'path>(
         &self,
         asset_server: &AssetServer,
         path: impl Into<&'path str>,
-    ) -> (Handle<Image>, Option<TextureAtlas>) {
+    ) -> (Handle<Image>, Option<(TextureAtlas, AnimatedTextureAtlas)>) {
         let path = path.into();
         let atlas_path = self
             .textures_root
             .resolve(&format!("{}.atlas.toml", path))
+            .unwrap();
+        let animation_path = self
+            .textures_root
+            .resolve(&format!("{}.atlas_animation.toml", path))
             .unwrap();
         (
             asset_server.load(
@@ -149,8 +158,15 @@ impl<'scope> PayloadScope<'scope> {
                     .resolve(&format!("{}.png", path))
                     .unwrap(),
             ),
-            if ASSETS_ROOT.get().unwrap().join(atlas_path.path()).exists() {
-                Some(TextureAtlas::from(asset_server.load(atlas_path)))
+            if {
+                let assets_root = ASSETS_ROOT.get().unwrap();
+                assets_root.join(atlas_path.path()).exists()
+                    && assets_root.join(animation_path.path()).exists()
+            } {
+                Some((
+                    TextureAtlas::from(asset_server.load(atlas_path)),
+                    AnimatedTextureAtlas::new(asset_server.load(animation_path)),
+                ))
             } else {
                 None
             },

@@ -1,10 +1,8 @@
 use crate::GameState;
 use crate::pld::{GLOBAL_PAYLOADS, PayloadLoadedMessage};
-use crate::ui::AnimatedImageNode;
 use bevy::app::App;
 use bevy::color::palettes::css::YELLOW;
 use bevy::prelude::*;
-use std::time::Duration;
 
 #[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 pub enum Loading {
@@ -68,7 +66,6 @@ fn init(mut commands: Commands, asset_server: Res<AssetServer>) {
                         ..default()
                     },
                     GLOBAL_PAYLOADS.ui_image(&asset_server, "loading_indicator"),
-                    AnimatedImageNode::new(0..8, Duration::from_millis(100)),
                 ),]
             )
         ],

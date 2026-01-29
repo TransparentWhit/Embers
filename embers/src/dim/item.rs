@@ -132,7 +132,7 @@ pub enum ItemActionWield {
 
 impl Default for ItemActionWield {
     fn default() -> Self {
-        Self::Hands(Default::default())
+        Self::Hands(default())
     }
 }
 

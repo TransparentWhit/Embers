@@ -11,6 +11,7 @@ use crate::dim::item::inv::InventorySlot;
 use crate::dim::item::{ItemStack, sword, tnt};
 use crate::pld::GLOBAL_PAYLOADS;
 use crate::reg::Reg;
+use crate::ui::AnimatedTextureAtlas;
 use crate::utils::Keyed;
 use avian3d::prelude::*;
 use bevy::camera::{ScalingMode, Viewport};
@@ -110,6 +111,7 @@ fn init(
                                             ..default()
                                         },
                                         ImageNode::default(),
+                                        AnimatedTextureAtlas::default(),
                                         HotbarSlot(i),
                                     ));
                                 }
@@ -148,6 +150,7 @@ fn init(
                                     ..default()
                                 },
                                 ImageNode::default(),
+                                AnimatedTextureAtlas::default(),
                                 MainHandSlot,
                             ),]
                         ),
@@ -259,24 +262,18 @@ fn update_hotbar(
     asset_server: Res<AssetServer>,
     player_inventory: Single<Ref<PlayerInventory>>,
     items: Query<&ItemStack>,
-    main_hand_slot: Single<&mut ImageNode, With<MainHandSlot>>,
-    mut hotbar_slots: Query<(&mut ImageNode, &HotbarSlot), Without<MainHandSlot>>,
+    mut main_hand_slot: Single<(&mut ImageNode, &mut AnimatedTextureAtlas), With<MainHandSlot>>,
+    mut hotbar_slots: Query<
+        (&mut ImageNode, &mut AnimatedTextureAtlas, &HotbarSlot),
+        Without<MainHandSlot>,
+    >,
 ) {
     if !player_inventory.is_changed() {
         return;
     }
-    *main_hand_slot.into_inner() = match player_inventory.main_hand() {
-        Some(item) => GLOBAL_PAYLOADS.item_image(
-            &asset_server,
-            items
-                .get(item)
-                .expect("Inventory held an item that doesn't exist")
-                .key(),
-        ),
-        None => ImageNode::default(),
-    };
-    for (hotbar_image, hotbar_slot) in hotbar_slots.iter_mut() {
-        *hotbar_image.into_inner() = match player_inventory.hotbar(hotbar_slot.0) {
+    {
+        let (ref mut image_node, ref mut animated_texture) = *main_hand_slot;
+        (**image_node, **animated_texture) = match player_inventory.main_hand() {
             Some(item) => GLOBAL_PAYLOADS.item_image(
                 &asset_server,
                 items
@@ -284,7 +281,25 @@ fn update_hotbar(
                     .expect("Inventory held an item that doesn't exist")
                     .key(),
             ),
-            None => ImageNode::default(),
+            None => default(),
+        };
+    }
+    for (ref mut image_node, ref mut animated_texture, hotbar_slot) in hotbar_slots.iter_mut() {
+        (**image_node, **animated_texture) = match player_inventory.hotbar(hotbar_slot.0) {
+            Some(item) => {
+                info!("flag0");
+                GLOBAL_PAYLOADS.item_image(
+                    &asset_server,
+                    items
+                        .get(item)
+                        .expect("Inventory held an item that doesn't exist")
+                        .key(),
+                )
+            }
+            None => {
+                info!("flag1");
+                default()
+            }
         };
     }
 }

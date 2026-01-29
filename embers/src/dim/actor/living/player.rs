@@ -79,7 +79,7 @@ fn process_input_entity_interactions_schedule() -> ScheduleConfigs<ScheduleSyste
      entity_interaction_reg: Reg<EntityInteraction>|
      -> (Entity, (), Option<InteractionTrigger>, Option<Entity>) {
         let (player, ref mut player_interactions, transform) = *player;
-        **player_interactions = PlayerEntityInteractions::default();
+        **player_interactions = default();
         (
             player,
             (),
@@ -279,7 +279,7 @@ pub fn process_input_hotbar(
     let mut update_equipment_slot_actions =
         |equipment_slot: EquipmentSlot, slot: Option<Entity>| {
             let slot_actions = equipment_actions.get_slot_mut(equipment_slot);
-            *slot_actions = ItemActions::default();
+            *slot_actions = default();
             slot.and_then(|item| initial_item_actions.get(item).ok())
                 .and_then(|(item_stack, initial_item_actions)| {
                     initial_item_actions

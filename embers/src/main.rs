@@ -36,20 +36,6 @@ enum GameState {
     MainMenu,
 }
 
-fn find_resources_root(folder: &str, marker: &str) -> Option<PathBuf> {
-    let mut path = current_exe().unwrap();
-    while let Ok(destination) = path.read_link() {
-        path = destination;
-    }
-    while path.pop() {
-        let resources = path.join(folder);
-        if resources.is_dir() && resources.join(marker).exists() {
-            return Some(resources);
-        }
-    }
-    None
-}
-
 // TODO: The initial loading logic is a bit messy. Someone refactor it later
 // asset.rs initiates global asset loading at StartUp,
 // when it completes it sends a message which gets received by loading_screen.rs,
@@ -60,9 +46,23 @@ fn main() {
         level: Level::INFO,
         ..default()
     });
+    let mut current_path = current_exe().unwrap();
+    while let Ok(destination) = current_path.read_link() {
+        current_path = destination;
+    }
+    let find_resource_root = |folder, marker| {
+        let mut path = current_path.clone();
+        while path.pop() {
+            let resources = path.join(folder);
+            if resources.is_dir() && resources.join(marker).exists() {
+                return Some(resources);
+            }
+        }
+        None
+    };
     UNPROCESSED_ASSETS_ROOT
         .set(
-            find_resources_root("pld", ".payload_root")
+            find_resource_root("pld", ".embers_payload_root")
                 .inspect(|path| info!("Found payload root: {}", path.display()))
                 .unwrap_or_else(|| {
                     #[cfg(debug_assertions)]
@@ -73,7 +73,7 @@ fn main() {
         .unwrap();
     ASSETS_ROOT
         .set(
-            find_resources_root("shp", ".shipment_root")
+            find_resource_root("shp", ".embers_shipment_root")
                 .inspect(|path| info!("Found shipment root: {}", path.display()))
                 .unwrap_or_else(|| {
                     warn!("Could not find shipment root!");

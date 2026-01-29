@@ -1,7 +1,7 @@
 target/
 shp/**
 !shp/**/
-!shp/.shipment_root
+!shp/.embers_shipment_root
 !shp/**/*.meta
 **/*.rs.bk
 *.pdb

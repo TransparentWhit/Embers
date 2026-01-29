@@ -6,7 +6,7 @@ use bevy::ecs::system::NonSendMarker;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy::winit::WINIT_WINDOWS;
-use std::ops::Range;
+use serde::Deserialize;
 use std::time::Duration;
 use winit::window::Icon;
 
@@ -28,17 +28,24 @@ fn ui_button(label: impl Into<String>) -> impl Bundle {
 
 const BUTTON_BACKGROUND_DEFAULT: BackgroundColor = BackgroundColor(Color::srgb(0.1, 0.1, 0.1));
 
-#[derive(Component, Debug)]
-pub struct AnimatedImageNode {
-    indices: Range<usize>,
-    timer: Timer,
+#[derive(Asset, Deserialize, TypePath, Debug)]
+pub struct TextureAtlasAnimation {
+    begin_index: usize,
+    end_index: usize,
+    frame_time_secs: f32,
 }
 
-impl AnimatedImageNode {
-    pub fn new(indices: Range<usize>, frame_time: Duration) -> Self {
+#[derive(Component, Clone, Debug, Default, Eq, PartialEq)]
+pub struct AnimatedTextureAtlas {
+    animation: Handle<TextureAtlasAnimation>,
+    timer: Option<Timer>,
+}
+
+impl AnimatedTextureAtlas {
+    pub fn new(animation: Handle<TextureAtlasAnimation>) -> Self {
         Self {
-            indices,
-            timer: Timer::new(frame_time, TimerMode::Repeating),
+            animation,
+            timer: None,
         }
     }
 }
@@ -50,18 +57,28 @@ pub struct SetWindowIcon {
 }
 
 pub(super) fn plugin(app: &mut App) {
-    app.insert_resource(UiScale(3.))
+    app.init_asset::<TextureAtlasAnimation>()
+        .insert_resource(UiScale(3.))
         .add_systems(
             Update,
-            |time: Res<Time>, mut animated: Query<(&mut ImageNode, &mut AnimatedImageNode)>| {
+            |time: Res<Time>,
+             atlas_animations: Res<Assets<TextureAtlasAnimation>>,
+             mut animated: Query<(&mut ImageNode, &mut AnimatedTextureAtlas)>| {
                 for (mut image_node, mut animated_image_node) in animated.iter_mut() {
-                    animated_image_node.timer.tick(time.delta());
-                    if animated_image_node.timer.just_finished()
+                    if let Some(animation) = atlas_animations.get(&animated_image_node.animation)
                         && let Some(atlas) = &mut image_node.texture_atlas
                     {
-                        atlas.index = atlas.index.wrapping_add(1);
-                        if !animated_image_node.indices.contains(&atlas.index) {
-                            atlas.index = animated_image_node.indices.start;
+                        let timer = animated_image_node.timer.get_or_insert_with(|| {
+                            Timer::from_seconds(animation.frame_time_secs, TimerMode::Repeating)
+                        });
+                        timer.tick(time.delta());
+                        if timer.just_finished() {
+                            atlas.index = atlas.index.wrapping_add(1);
+                            if atlas.index >= animation.end_index
+                                || atlas.index < animation.begin_index
+                            {
+                                atlas.index = animation.begin_index;
+                            }
                         }
                     }
                 }
