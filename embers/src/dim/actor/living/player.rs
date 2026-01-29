@@ -255,31 +255,31 @@ pub struct HotbarSelectionUpdated;
 pub struct OffHandSwapped;
 
 fn update_equipment_slot_actions(
-        equipment_slot: EquipmentSlot,
-        slot: Option<Entity>,
-        item_action_reg: &Reg<ItemAction>,
-        initial_item_actions: Query<(&ItemStack, Option<&InitialItemActions>)>,
-        initial_item_actions_reg: &Reg<InitialItemActions>,
-        equipment_actions: &mut PlayerEquipmentItemActions
-    ) {
-            let slot_actions = equipment_actions.get_slot_mut(equipment_slot);
-            *slot_actions = ItemActions::default();
-            slot.and_then(|item| initial_item_actions.get(item).ok())
-                .and_then(|(item_stack, initial_item_actions)| {
-                    initial_item_actions
-                        .cloned()
-                        .or_registry(&initial_item_actions_reg, item_stack.key())
-                })
-                .inspect(|initial_actions| {
-                    let item_action_slot = equipment_slot.item_action_slot();
-                    for trigger in [InteractionTrigger::DoubleClick, InteractionTrigger::Click] {
-                        initial_actions
-                            .get(item_action_slot, trigger)
-                            .and_then(|action| item_action_reg.get(action))
-                            .inspect(|action| slot_actions.set(trigger, (*action).clone()));
-                    }
-                });
-        }
+    equipment_slot: EquipmentSlot,
+    slot: Option<Entity>,
+    item_action_reg: &Reg<ItemAction>,
+    initial_item_actions: Query<(&ItemStack, Option<&InitialItemActions>)>,
+    initial_item_actions_reg: &Reg<InitialItemActions>,
+    equipment_actions: &mut PlayerEquipmentItemActions,
+) {
+    let slot_actions = equipment_actions.get_slot_mut(equipment_slot);
+    *slot_actions = ItemActions::default();
+    slot.and_then(|item| initial_item_actions.get(item).ok())
+        .and_then(|(item_stack, initial_item_actions)| {
+            initial_item_actions
+                .cloned()
+                .or_registry(&initial_item_actions_reg, item_stack.key())
+        })
+        .inspect(|initial_actions| {
+            let item_action_slot = equipment_slot.item_action_slot();
+            for trigger in [InteractionTrigger::DoubleClick, InteractionTrigger::Click] {
+                initial_actions
+                    .get(item_action_slot, trigger)
+                    .and_then(|action| item_action_reg.get(action))
+                    .inspect(|action| slot_actions.set(trigger, (*action).clone()));
+            }
+        });
+}
 
 pub fn process_input_hotbar(
     mut commands: Commands,
@@ -338,7 +338,7 @@ pub fn upd_actions(
     item_action_reg: Reg<ItemAction>,
     initial_item_actions: Query<(&ItemStack, Option<&InitialItemActions>)>,
     initial_item_actions_reg: Reg<InitialItemActions>,
-    ) {
+) {
     let (_, inventory, ref mut selected_hotbar_slot, ref mut equipment_actions) = *player;
     update_equipment_slot_actions(
         EquipmentSlot::MainHand,
@@ -634,12 +634,15 @@ pub(in crate::dim) fn plugin(app: &mut App) {
     app.add_message::<OffHandSwapped>();
     app.add_systems(
         Update,
-        ((
-            process_input_entity_interactions_schedule(),
-            process_input_item_actions_schedule().after(process_input_hotbar),
-            process_input_hotbar,
-            process_input_movement,
-        ), upd_actions)
+        (
+            (
+                process_input_entity_interactions_schedule(),
+                process_input_item_actions_schedule().after(process_input_hotbar),
+                process_input_hotbar,
+                process_input_movement,
+            ),
+            upd_actions,
+        )
             .chain()
             .run_if(in_state(GameState::Dimension)),
     );
