@@ -68,7 +68,7 @@ fn menu_action(
                 MainMenuButton::Play => {
                     loading.set(Loading::World);
                     game_state.set(GameState::Loading);
-                    payload_load_requests.write(PayloadLoadRequest::Scope(LOBBY.payloads()));
+                    payload_load_requests.write(PayloadLoadRequest(LOBBY.payloads()));
                     menu_state.set(MainMenuState::Main);
                 }
                 MainMenuButton::Options => menu_state.set(MainMenuState::Options),

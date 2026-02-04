@@ -1,19 +1,19 @@
 //! *Payload*(pld)*s* are resources that the game uses during execution, such as assets or game data.
 //! *Shipment*(shp)*s* are their processed counterpart.
 
-pub mod atlas;
 pub mod meta;
 
 use crate::pld::meta::ReloadMetadata;
 use crate::ui::AnimatedTextureAtlas;
-use crate::utils::{ConstHashSet, Namespaced, NamespacedKey, const_hash_set};
+use crate::utils::{Namespaced, NamespacedKey};
 use crate::{ASSETS_ROOT, GameState};
 use bevy::app::App;
 use bevy::asset::{AssetPath, LoadedFolder};
 use bevy::prelude::*;
-use std::sync::{LazyLock, Mutex};
+use std::collections::HashMap;
+use std::sync::LazyLock;
 
-#[derive(Eq, PartialEq, Hash, Clone)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PayloadScope<'scope> {
     root: AssetPath<'scope>,
     textures_root: AssetPath<'scope>,
@@ -55,6 +55,17 @@ impl<'scope> PayloadScope<'scope> {
             asset_server,
             &*format!("actors/{}/{}", key.namespace(), key.key()),
             label,
+        )
+    }
+    #[inline]
+    pub fn block_texture<'path>(
+        &self,
+        asset_server: &AssetServer,
+        key: &NamespacedKey,
+    ) -> (Handle<Image>, Option<(TextureAtlas, AnimatedTextureAtlas)>) {
+        self.animated_texture(
+            asset_server,
+            &*format!("blocks/{}/{}", key.namespace(), key.key()),
         )
     }
     #[inline]
@@ -192,35 +203,32 @@ impl<'scope> PayloadScope<'scope> {
 pub static GLOBAL_PAYLOADS: LazyLock<PayloadScope> = LazyLock::new(|| PayloadScope::new("global"));
 
 fn load_global_payloads(mut asset_load_requests: MessageWriter<PayloadLoadRequest>) {
-    asset_load_requests.write(PayloadLoadRequest::Scope(&GLOBAL_PAYLOADS));
+    asset_load_requests.write(PayloadLoadRequest(&GLOBAL_PAYLOADS));
 }
 
 #[derive(Message)]
-pub enum PayloadLoadRequest {
-    Scope(&'static PayloadScope<'static>),
-}
+pub struct PayloadLoadRequest(pub &'static PayloadScope<'static>);
 
 #[derive(Message)]
 pub struct PayloadLoadedMessage {}
 
 #[derive(Message)]
-pub enum PayloadUnloadRequest {
-    Scope(&'static PayloadScope<'static>),
-}
+pub struct PayloadUnloadRequest(pub &'static PayloadScope<'static>);
 
-static LOADED_PAYLOADS: Mutex<ConstHashSet<UntypedHandle>> = Mutex::new(const_hash_set());
+#[derive(Resource, Default)]
+struct LoadedPayloads(HashMap<UntypedHandle, &'static PayloadScope<'static>>);
 
 fn payload_load_request_listener(
     mut requests: MessageReader<PayloadLoadRequest>,
     asset_server: Res<AssetServer>,
+    mut loaded_payloads: ResMut<LoadedPayloads>,
     mut game_state: ResMut<NextState<GameState>>,
 ) {
     for request in requests.read() {
-        LOADED_PAYLOADS.lock().unwrap().insert(match request {
-            PayloadLoadRequest::Scope(scope) => {
-                asset_server.load_folder(scope.root.clone()).untyped()
-            }
-        });
+        loaded_payloads.0.insert(
+            asset_server.load_folder(request.0.root.clone()).untyped(),
+            request.0,
+        );
         game_state.set(GameState::Loading);
     }
 }
@@ -228,32 +236,36 @@ fn payload_load_request_listener(
 fn payload_unload_request_listener(
     mut requests: MessageReader<PayloadUnloadRequest>,
     asset_server: Res<AssetServer>,
+    mut loaded_payloads: ResMut<LoadedPayloads>,
 ) {
     for request in requests.read() {
-        match request {
-            PayloadUnloadRequest::Scope(scope) => asset_server
-                .get_path_id(scope.root.clone())
-                .and_then(|untyped_id| asset_server.get_id_handle_untyped(untyped_id)),
-        }
-        .map(|handle| LOADED_PAYLOADS.lock().unwrap().remove(&handle));
+        asset_server
+            .get_path_id(request.0.root.clone())
+            .and_then(|untyped_id| asset_server.get_id_handle_untyped(untyped_id))
+            .map(|handle| loaded_payloads.0.remove(&handle));
     }
 }
 
 fn folder_loaded_listener(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
     mut folder_events: MessageReader<AssetEvent<LoadedFolder>>,
     mut messages: MessageWriter<PayloadLoadedMessage>,
+    loaded_payloads: Res<LoadedPayloads>,
 ) {
     for event in folder_events.read() {
-        if let AssetEvent::LoadedWithDependencies { .. } = event {
+        if let AssetEvent::LoadedWithDependencies { id } = event {
             messages.write(PayloadLoadedMessage {});
-            commands.trigger(ReloadMetadata);
+            commands.trigger(ReloadMetadata {
+                scope: loaded_payloads.0[&asset_server.get_id_handle(*id).unwrap().untyped()],
+            });
         }
     }
 }
 
 pub(super) fn plugin(app: &mut App) {
-    app.add_message::<PayloadLoadRequest>()
+    app.init_resource::<LoadedPayloads>()
+        .add_message::<PayloadLoadRequest>()
         .add_message::<PayloadUnloadRequest>()
         .add_message::<PayloadLoadedMessage>()
         .add_systems(Startup, load_global_payloads)
@@ -264,7 +276,6 @@ pub(super) fn plugin(app: &mut App) {
                 payload_unload_request_listener,
             ),
         )
-        .add_systems(Update, (folder_loaded_listener,))
-        .add_plugins(atlas::plugin)
+        .add_systems(Update, folder_loaded_listener)
         .add_plugins(meta::plugin);
 }

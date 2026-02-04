@@ -1,10 +1,13 @@
 use crate::dim::Particles;
 use crate::dim::actor::living::AttributeBase;
-use crate::dim::block::{BlockCollider, BlockModel};
+use crate::dim::block::{
+    BlockCollider, BlockColliderTemplate, BlockModel, BlockVoxelModelTemplate,
+};
 use crate::dim::item::{ItemAction, ItemActionTemplate, ItemComponent};
+use crate::pld::PayloadScope;
 use crate::reg::{RegBoxed, RegMut, RegistryBoxed};
 use crate::ui::TextureAtlasAnimation;
-use crate::utils::{NamespacedKey, path_to_unix_components};
+use crate::utils::{NamespacedKey, TextureAtlasManifest, path_to_unix_components};
 use anyhow::Error;
 use bevy::asset::io::Reader;
 use bevy::asset::{AssetLoader, AssetServer, LoadContext};
@@ -23,7 +26,7 @@ static ACTOR_BASE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
         .unwrap()
 });
 
-#[derive(Asset, Debug, Deserialize, TypePath)]
+#[derive(Asset, Deserialize, TypePath, Debug)]
 struct ActorBase {
     #[serde(default)]
     attributes: HashMap<NamespacedKey, f32>,
@@ -34,9 +37,16 @@ static BLOCK_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
         .unwrap()
 });
 
-#[derive(Asset, Debug, Deserialize, TypePath)]
+#[derive(Asset, Deserialize, TypePath, Debug)]
 struct BlockMeta {
     //model: BlockModel,
+    collider: BlockColliderMeta,
+}
+
+#[derive(Deserialize, Debug)]
+struct BlockColliderMeta {
+    template: NamespacedKey,
+    config: Table,
 }
 
 static ITEM_ACTION_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
@@ -44,7 +54,7 @@ static ITEM_ACTION_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
         .unwrap()
 });
 
-#[derive(Asset, Debug, Deserialize, TypePath)]
+#[derive(Asset, Deserialize, TypePath, Debug)]
 struct ItemActionMeta {
     template: NamespacedKey,
     config: Table,
@@ -55,7 +65,7 @@ static ITEM_PROTOTYPE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
         .unwrap()
 });
 
-#[derive(Asset, Debug, Deserialize, TypePath)]
+#[derive(Asset, Deserialize, TypePath, Debug)]
 struct ItemPrototype(Table);
 
 static PARTICLE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
@@ -72,14 +82,14 @@ static VOXEL_MODEL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
-#[derive(Asset, Debug, Deserialize, TypePath)]
+#[derive(Asset, Deserialize, TypePath, Debug)]
 struct VoxelModel {
     parent: Option<NamespacedKey>,
     #[serde(default)]
     images: HashMap<String, NamespacedKey>,
 }
 
-#[derive(Asset, Debug, Deserialize, TypePath)]
+#[derive(Asset, Deserialize, TypePath, Debug)]
 struct ParticleMeta {
     /*max_particles: u32,
     spawn_count: f32,
@@ -163,8 +173,10 @@ impl<M: Asset + for<'de> Deserialize<'de>> AssetLoader for RawMetadataLoader<M> 
     }
 }
 
-#[derive(Event)]
-pub struct ReloadMetadata;
+#[derive(Event, Debug)]
+pub struct ReloadMetadata {
+    pub scope: &'static PayloadScope<'static>,
+}
 
 fn reload_metadata_plugin(app: &mut App) {
     fn process_meta<D: SystemInput + 'static, M: Asset, P: SystemParam + 'static>(
@@ -173,7 +185,7 @@ fn reload_metadata_plugin(app: &mut App) {
         parse: fn(NamespacedKey, &M, &mut P::Item<'_, '_>, &mut D::Inner<'_>),
     ) -> impl System<In = In<StaticSystemInput<'static, D>>, Out = D::Inner<'static>> {
         IntoSystem::into_system(
-            move |In(mut data): In<StaticSystemInput<'static, D>>,
+            move |In(StaticSystemInput(mut data)): In<StaticSystemInput<'static, D>>,
                   asset_server: Res<AssetServer>,
                   metadata: Res<Assets<M>>,
                   extra: StaticSystemParam<P>| {
@@ -193,11 +205,11 @@ fn reload_metadata_plugin(app: &mut App) {
                         },
                         meta,
                         &mut extra,
-                        &mut data.0,
+                        &mut data,
                     );
                 }
                 info!("Found {} {}(s).", metadata.len(), r#type);
-                data.0
+                data
             },
         )
     }
@@ -217,22 +229,68 @@ fn reload_metadata_plugin(app: &mut App) {
         )),
     )
     .add_observer(
-        (|_on_reload_metadata: On<ReloadMetadata>,
+        (|on_reload_metadata: On<ReloadMetadata>,
           mut block_colliders: RegMut<BlockCollider>,
           mut block_models: RegMut<BlockModel>| {
             block_colliders.clear();
             block_models.clear();
-            StaticSystemInput(())
+            StaticSystemInput((on_reload_metadata.scope, default()))
         })
         .pipe(process_meta::<
-            (),
+            (InRef<PayloadScope<'static>>, In<TextureAtlasManifest>),
             BlockMeta,
-            (RegMut<BlockCollider>, RegMut<BlockModel>),
+            (
+                Res<AssetServer>,
+                Res<Assets<Image>>,
+                RegMut<BlockCollider>,
+                RegBoxed<dyn BlockColliderTemplate>,
+                RegMut<BlockModel>,
+                RegBoxed<dyn BlockVoxelModelTemplate>,
+            ),
         >(
             &BLOCK_PATTERN,
             "block",
-            |key, block, (block_colliders, block_models), ()| {},
-        )),
+            |key,
+             block,
+             (
+                asset_server,
+                images,
+                block_colliders,
+                block_collider_templates,
+                block_models,
+                block_voxel_model_templates,
+            ),
+             (payload_scope, block_atlas_manifest)| {
+                match block_collider_templates.get(&block.collider.template) {
+                    Some(block_collider_template) => {
+                        block_colliders
+                            .register(
+                                key.clone(),
+                                block_collider_template
+                                    .create(block.collider.config.clone())
+                                    .expect("Failed to apply block collider template"),
+                            )
+                            .expect("Failed to register block collider");
+                    }
+                    None => error!(
+                        "Unknown block collider template: {}",
+                        block.collider.template
+                    ),
+                }
+                let (image, animation) = payload_scope.block_texture(asset_server, &key);
+                // TODO animations
+                block_atlas_manifest.add_texture(Some(image.id()), image);
+            },
+        ))
+        .pipe(
+            |In((_payload_scope, block_atlas_manifest)): In<(
+                &PayloadScope,
+                TextureAtlasManifest,
+            )>,
+             images: Res<Assets<Image>>| {
+                block_atlas_manifest.manifest(&images).build().unwrap();
+            },
+        ),
     )
     .add_observer(
         (|_on_reload_metadata: On<ReloadMetadata>, mut item_actions: RegMut<ItemAction>| {

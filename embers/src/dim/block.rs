@@ -15,28 +15,11 @@ impl Keyed for Block {
 }
 
 #[derive(Debug)]
-pub struct BlockCollider([u64; 8]);
+pub struct BlockCollider(pub [u64; 8]);
 
 impl BlockCollider {
     pub const RESOLUTION: i32 = 8;
     pub const VOXEL_SIZE: Vec3 = Vec3::splat(1. / Self::RESOLUTION as f32);
-    pub fn new_empty() -> Self {
-        Self([0x0000000000000000; 8])
-    }
-    pub fn new_full() -> Self {
-        Self([0xffffffffffffffff; 8])
-    }
-    pub fn new_layered(mut layers: u8) -> Self {
-        let mut yz = 0;
-        for _y in 0..8 {
-            if layers & 1 != 0 {
-                yz += 0xff;
-            }
-            layers >>= 1;
-            yz <<= 8;
-        }
-        Self([yz; 8])
-    }
     pub fn coordinates(&self) -> impl Iterator<Item = IVec3> {
         self.0.iter().enumerate().flat_map(|(idx, yz)| {
             let x = idx as i32;
@@ -50,6 +33,16 @@ impl BlockCollider {
             }
             coords.into_iter()
         })
+    }
+}
+
+pub trait BlockColliderTemplate: Send + Sync {
+    fn create(&self, config: Table) -> Result<BlockCollider, Error>;
+}
+
+impl<T: (Fn(Table) -> Result<BlockCollider, Error>) + Send + Sync> BlockColliderTemplate for T {
+    fn create(&self, config: Table) -> Result<BlockCollider, Error> {
+        self(config)
     }
 }
 
@@ -95,12 +88,78 @@ impl<T: (Fn(NamespacedKey, Table) -> Result<BlockVoxelModel, Error>) + Send + Sy
 }
 
 pub(super) fn plugin(app: &mut App) {
-    app.init_registry::<BlockCollider>()
+    app
+        .init_registry::<BlockCollider>()
         .init_registry::<BlockModel>()
+        .init_registry_boxed::<dyn BlockColliderTemplate>()
         .init_registry_boxed::<dyn BlockVoxelModelTemplate>()
         .add_systems(
             PreStartup,
-            |asset_server: Res<AssetServer>, mut block_voxel_model_templates: RegBoxedMut<dyn BlockVoxelModelTemplate>| {
+            (|mut block_collider_templates: RegBoxedMut<dyn BlockColliderTemplate>| {
+                (|| {
+                    fn layered_collider(mut layers: u8) -> BlockCollider {
+                        let mut yz = 0;
+                        for _y in 0..8 {
+                            if layers & 1 != 0 {
+                                yz += 0xff;
+                            }
+                            layers >>= 1;
+                            yz <<= 8;
+                        }
+                        BlockCollider([yz; 8])
+                    }
+                    block_collider_templates.register(
+                        NamespacedKey::new_embers("empty"),
+                        Box::new(|_config| Ok(BlockCollider([0x0000000000000000; 8]))),
+                    )?;
+                    block_collider_templates.register(
+                        NamespacedKey::new_embers("full"),
+                        Box::new(|_config| Ok(BlockCollider([0xffffffffffffffff; 8]))),
+                    )?;
+                    block_collider_templates.register(
+                        NamespacedKey::new_embers("slab"),
+                        Box::new(|config| {
+                            #[derive(Deserialize)]
+                            struct Slab {
+                                variant: SlabVariant,
+                            }
+                            #[derive(Deserialize)]
+                            #[serde(rename_all = "snake_case")]
+                            enum SlabVariant {
+                                Top,
+                                Bottom,
+                            }
+                            Ok(layered_collider(match Slab::deserialize(config)?.variant {
+                                SlabVariant::Top => 0x0f,
+                                SlabVariant::Bottom => 0xf0,
+                            }))
+                        }),
+                    )?;
+                    block_collider_templates.register(
+                        NamespacedKey::new_embers("layered"),
+                        Box::new(|config| {
+                            #[derive(Deserialize)]
+                            struct Layered {
+                                layers: u8,
+                            }
+                            Ok(layered_collider(Layered::deserialize(config)?.layers))
+                        }),
+                    )?;
+                    block_collider_templates.register(
+                        NamespacedKey::new_embers("custom"),
+                        Box::new(|config| {
+                            #[derive(Deserialize)]
+                            struct Custom {
+                                data: [u64; 8],
+                            }
+                            Ok(BlockCollider(Custom::deserialize(config)?.data))
+                        }),
+                    )?;
+                    Ok::<(), RegistryError>(())
+                })()
+                .expect("Failed to register block collider templates")
+            },
+             |asset_server: Res<AssetServer>, mut block_voxel_model_templates: RegBoxedMut<dyn BlockVoxelModelTemplate>| {
                 (|| {
                     block_voxel_model_templates.register(
                         NamespacedKey::new_embers("empty"),
@@ -162,5 +221,5 @@ pub(super) fn plugin(app: &mut App) {
                 })()
                 .expect("Failed to register block model voxel templates")
             },
-        );
+            ));
 }

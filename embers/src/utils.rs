@@ -4,9 +4,7 @@ use bevy::asset::uuid::Uuid;
 use bevy::prelude::*;
 use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::hash::{BuildHasherDefault, DefaultHasher};
 use std::path::{Component, Path};
 use std::result::Result;
 use std::str::FromStr;
@@ -26,18 +24,6 @@ pub trait UntypedPartialCmp<Lhs, Rhs = Lhs> {
 }
 
 pub trait UntypedCmp<T>: UntypedPartialCmp<T, T> {}
-
-pub type ConstHashMap<K, V> = HashMap<K, V, BuildHasherDefault<DefaultHasher>>;
-
-pub const fn const_hash_map<K, V>() -> ConstHashMap<K, V> {
-    HashMap::with_hasher(BuildHasherDefault::new())
-}
-
-pub type ConstHashSet<T> = HashSet<T, BuildHasherDefault<DefaultHasher>>;
-
-pub const fn const_hash_set<T>() -> ConstHashSet<T> {
-    HashSet::with_hasher(BuildHasherDefault::new())
-}
 
 pub trait Named {
     fn name(&self) -> &str;
@@ -270,9 +256,33 @@ pub fn path_to_unix_components<P: AsRef<Path>>(path: P) -> String {
     result
 }
 
+#[derive(Debug, Default)]
+pub struct TextureAtlasManifest {
+    textures_to_place: Vec<(Option<AssetId<Image>>, Handle<Image>)>,
+}
+
+impl TextureAtlasManifest {
+    pub fn add_texture(
+        &mut self,
+        image_id: Option<AssetId<Image>>,
+        texture: Handle<Image>,
+    ) -> &mut Self {
+        self.textures_to_place.push((image_id, texture));
+        self
+    }
+    pub fn manifest<'img>(&self, images: &'img Assets<Image>) -> TextureAtlasBuilder<'img> {
+        let mut builder = TextureAtlasBuilder::default();
+        for (image_id, image) in self.textures_to_place.iter() {
+            builder.add_texture(image_id.clone(), images.get(image).unwrap());
+        }
+        builder
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[derive(Debug)]
     struct DummyNamespaced(String);
@@ -494,19 +504,5 @@ mod tests {
     fn keyed_tuples() {
         let namespaced_key = NamespacedKey::new("embers", "utils");
         assert_eq!((namespaced_key.clone(), 42).key(), &namespaced_key);
-    }
-
-    #[test]
-    fn const_hash_map_and_set() {
-        let _map: ConstHashMap<String, i32> = const { const_hash_map() };
-        let _set: ConstHashSet<String> = const { const_hash_set() };
-
-        let mut map = const { const_hash_map() };
-        map.insert("key".to_string(), 42);
-        assert_eq!(map.get("key"), Some(&42));
-
-        let mut set = const { const_hash_set() };
-        set.insert("value".to_string());
-        assert!(set.contains("value"));
     }
 }

@@ -286,20 +286,14 @@ fn update_hotbar(
     }
     for (ref mut image_node, ref mut animated_texture, hotbar_slot) in hotbar_slots.iter_mut() {
         (**image_node, **animated_texture) = match player_inventory.hotbar(hotbar_slot.0) {
-            Some(item) => {
-                info!("flag0");
-                GLOBAL_PAYLOADS.item_image(
-                    &asset_server,
-                    items
-                        .get(item)
-                        .expect("Inventory held an item that doesn't exist")
-                        .key(),
-                )
-            }
-            None => {
-                info!("flag1");
-                default()
-            }
+            Some(item) => GLOBAL_PAYLOADS.item_image(
+                &asset_server,
+                items
+                    .get(item)
+                    .expect("Inventory held an item that doesn't exist")
+                    .key(),
+            ),
+            None => default(),
         };
     }
 }
