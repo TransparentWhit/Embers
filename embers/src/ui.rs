@@ -7,7 +7,6 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy::winit::WINIT_WINDOWS;
 use serde::Deserialize;
-use std::time::Duration;
 use winit::window::Icon;
 
 fn ui_button(label: impl Into<String>) -> impl Bundle {

@@ -4,8 +4,7 @@ use crate::dim::actor::item_actor::item_actor_of;
 use crate::dim::actor::living::AttributeBase;
 use crate::dim::actor::living::dummy::dummy;
 use crate::dim::actor::living::player::{
-    HOTBAR_SLOTS, HotbarSelectionUpdated, Player, PlayerInventory, SelectedHotbarSlot, player,
-    process_input_hotbar,
+    HOTBAR_SLOTS, Player, PlayerInventory, SelectedHotbarSlot, player, process_input_hotbar,
 };
 use crate::dim::item::inv::InventorySlot;
 use crate::dim::item::{ItemStack, sword, tnt};
@@ -301,11 +300,11 @@ fn update_hotbar(
 fn update_inventory(player_inventory: Single<&PlayerInventory>) {}
 
 fn update_hotbar_selection(
-    hotbar_selection_updated_reader: MessageReader<HotbarSelectionUpdated>,
+    player: Single<Ref<SelectedHotbarSlot>, With<Player>>,
     mut hotbar_selection_node: Single<&mut Node, With<HotbarSelection>>,
-    selected_hotbar_slot: Single<&SelectedHotbarSlot>,
 ) {
-    if !hotbar_selection_updated_reader.is_empty() {
+    let ref selected_hotbar_slot = *player;
+    if selected_hotbar_slot.is_changed() {
         **hotbar_selection_node = Node {
             position_type: PositionType::Absolute,
             left: px(-1 + selected_hotbar_slot.0 * 20),
