@@ -79,7 +79,7 @@ fn process_input_entity_interactions_schedule() -> ScheduleConfigs<ScheduleSyste
      entity_interaction_reg: Reg<EntityInteraction>|
      -> (Entity, (), Option<InteractionTrigger>, Option<Entity>) {
         let (player, ref mut player_interactions, transform) = *player;
-        **player_interactions = default();
+        **player_interactions = PlayerEntityInteractions::default();
         (
             player,
             (),
@@ -254,6 +254,33 @@ pub struct HotbarSelectionUpdated;
 #[derive(Message)]
 pub struct OffHandSwapped;
 
+fn update_equipment_slot_actions(
+    equipment_slot: EquipmentSlot,
+    slot: Option<Entity>,
+    item_action_reg: &Reg<ItemAction>,
+    initial_item_actions: Query<(&ItemStack, Option<&InitialItemActions>)>,
+    initial_item_actions_reg: &Reg<InitialItemActions>,
+    equipment_actions: &mut PlayerEquipmentItemActions,
+) {
+    let slot_actions = equipment_actions.get_slot_mut(equipment_slot);
+    *slot_actions = ItemActions::default();
+    slot.and_then(|item| initial_item_actions.get(item).ok())
+        .and_then(|(item_stack, initial_item_actions)| {
+            initial_item_actions
+                .cloned()
+                .or_registry(&initial_item_actions_reg, item_stack.key())
+        })
+        .inspect(|initial_actions| {
+            let item_action_slot = equipment_slot.item_action_slot();
+            for trigger in [InteractionTrigger::DoubleClick, InteractionTrigger::Click] {
+                initial_actions
+                    .get(item_action_slot, trigger)
+                    .and_then(|action| item_action_reg.get(action))
+                    .inspect(|action| slot_actions.set(trigger, (*action).clone()));
+            }
+        });
+}
+
 pub fn process_input_hotbar(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
@@ -268,34 +295,11 @@ pub fn process_input_hotbar(
         ),
         With<Player>,
     >,
-    item_action_reg: Reg<ItemAction>,
-    initial_item_actions: Query<(&ItemStack, Option<&InitialItemActions>)>,
-    initial_item_actions_reg: Reg<InitialItemActions>,
     mut hotbar_selection_updated_writer: MessageWriter<HotbarSelectionUpdated>,
     mut off_hand_swapped_writer: MessageWriter<OffHandSwapped>,
 ) {
-    let (player, inventory, ref mut selected_hotbar_slot, ref mut equipment_actions) = *player;
+    let (player, inventory, ref mut selected_hotbar_slot, _) = *player;
     let prev_hotbar_selection = selected_hotbar_slot.0;
-    let mut update_equipment_slot_actions =
-        |equipment_slot: EquipmentSlot, slot: Option<Entity>| {
-            let slot_actions = equipment_actions.get_slot_mut(equipment_slot);
-            *slot_actions = default();
-            slot.and_then(|item| initial_item_actions.get(item).ok())
-                .and_then(|(item_stack, initial_item_actions)| {
-                    initial_item_actions
-                        .cloned()
-                        .or_registry(&initial_item_actions_reg, item_stack.key())
-                })
-                .inspect(|initial_actions| {
-                    let item_action_slot = equipment_slot.item_action_slot();
-                    for trigger in [InteractionTrigger::DoubleClick, InteractionTrigger::Click] {
-                        initial_actions
-                            .get(item_action_slot, trigger)
-                            .and_then(|action| item_action_reg.get(action))
-                            .inspect(|action| slot_actions.set(trigger, (*action).clone()));
-                    }
-                });
-        };
     for hotbar_slot in 0..HOTBAR_SLOTS {
         if just_pressed(&CONTROLS_HOTBARS[hotbar_slot as usize], &keys, &mouse) {
             selected_hotbar_slot.0 = hotbar_slot;
@@ -309,10 +313,6 @@ pub fn process_input_hotbar(
         selected_hotbar_slot.0 = selected_hotbar_slot.0.rem_euclid(HOTBAR_SLOTS);
     }
     if prev_hotbar_selection != selected_hotbar_slot.0 {
-        update_equipment_slot_actions(
-            EquipmentSlot::OffHand,
-            inventory.hotbar(selected_hotbar_slot.0),
-        );
         hotbar_selection_updated_writer.write(HotbarSelectionUpdated);
     }
     if just_pressed(&CONTROLS_SWAP_OFF_HAND, &keys, &mouse) {
@@ -321,14 +321,41 @@ pub fn process_input_hotbar(
             ItemDestination::inventory_slot(player, selected_hotbar_slot.0, inventory),
             ItemMoveQuantity::All,
         );
-        update_equipment_slot_actions(EquipmentSlot::MainHand, inventory.main_hand());
-        update_equipment_slot_actions(
-            EquipmentSlot::OffHand,
-            inventory.hotbar(selected_hotbar_slot.0),
-        );
         off_hand_swapped_writer.write(OffHandSwapped);
     }
-    update_equipment_slot_actions(EquipmentSlot::Armor, inventory.armor());
+}
+
+pub fn upd_actions(
+    mut player: Single<
+        (
+            Entity,
+            &PlayerInventory,
+            &mut SelectedHotbarSlot,
+            &mut PlayerEquipmentItemActions,
+        ),
+        With<Player>,
+    >,
+    item_action_reg: Reg<ItemAction>,
+    initial_item_actions: Query<(&ItemStack, Option<&InitialItemActions>)>,
+    initial_item_actions_reg: Reg<InitialItemActions>,
+) {
+    let (_, inventory, ref mut selected_hotbar_slot, ref mut equipment_actions) = *player;
+    update_equipment_slot_actions(
+        EquipmentSlot::MainHand,
+        inventory.main_hand(),
+        &item_action_reg,
+        initial_item_actions,
+        &initial_item_actions_reg,
+        equipment_actions,
+    );
+    update_equipment_slot_actions(
+        EquipmentSlot::OffHand,
+        inventory.hotbar(selected_hotbar_slot.0),
+        &item_action_reg,
+        initial_item_actions,
+        &initial_item_actions_reg,
+        equipment_actions,
+    );
 }
 
 fn process_input_movement(
@@ -608,11 +635,15 @@ pub(in crate::dim) fn plugin(app: &mut App) {
     app.add_systems(
         Update,
         (
-            process_input_entity_interactions_schedule(),
-            process_input_item_actions_schedule().after(process_input_hotbar),
-            process_input_hotbar,
-            process_input_movement,
+            (
+                process_input_entity_interactions_schedule(),
+                process_input_item_actions_schedule().after(process_input_hotbar),
+                process_input_hotbar,
+                process_input_movement,
+            ),
+            upd_actions,
         )
+            .chain()
             .run_if(in_state(GameState::Dimension)),
     );
 }
