@@ -2,6 +2,7 @@ pub mod dim;
 pub mod loading_screen;
 pub mod main_menu;
 
+use crate::pld::resolve_optional_payload;
 use bevy::ecs::system::NonSendMarker;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -58,6 +59,30 @@ pub struct SetWindowIcon {
 pub(super) fn plugin(app: &mut App) {
     app.init_asset::<TextureAtlasAnimation>()
         .insert_resource(UiScale(3.))
+        .add_systems(
+            Update,
+            (
+                resolve_optional_payload::<TextureAtlasLayout>(
+                    |commands, handle| {
+                        commands.queue(|mut entity: EntityWorldMut| {
+                            entity
+                                .get_mut::<ImageNode>()
+                                .expect("Texture atlas layout is present without image node")
+                                .texture_atlas = Some(TextureAtlas::from(handle));
+                        });
+                    },
+                    |_commands| {},
+                ),
+                resolve_optional_payload::<TextureAtlasAnimation>(
+                    |commands, handle| {
+                        commands.insert(AnimatedTextureAtlas::new(handle));
+                    },
+                    |commands| {
+                        commands.remove::<AnimatedTextureAtlas>();
+                    },
+                ),
+            ),
+        )
         .add_systems(
             Update,
             |time: Res<Time>,

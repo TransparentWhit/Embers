@@ -1,0 +1,4 @@
+#[model]
+
+[collider]
+template = "embers:full"

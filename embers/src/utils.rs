@@ -270,13 +270,27 @@ impl TextureAtlasManifest {
         self.textures_to_place.push((image_id, texture));
         self
     }
-    pub fn manifest<'img>(&self, images: &'img Assets<Image>) -> TextureAtlasBuilder<'img> {
+    pub fn manifest<'img>(
+        &self,
+        images: &'img Assets<Image>,
+    ) -> Result<TextureAtlasBuilder<'img>, TextureAtlasManifestError> {
         let mut builder = TextureAtlasBuilder::default();
         for (image_id, image) in self.textures_to_place.iter() {
-            builder.add_texture(image_id.clone(), images.get(image).unwrap());
+            builder.add_texture(
+                image_id.clone(),
+                images.get(image).ok_or_else(|| {
+                    TextureAtlasManifestError::InvalidTextureHandle(image.clone())
+                })?,
+            );
         }
-        builder
+        Ok(builder)
     }
+}
+
+#[derive(Debug, Error)]
+pub enum TextureAtlasManifestError {
+    #[error("The manifest held a handle({0:#?}) that referenced a nonexistent image")]
+    InvalidTextureHandle(Handle<Image>),
 }
 
 #[cfg(test)]
@@ -305,7 +319,7 @@ mod tests {
         assert!(!NAMESPACE_PATTERN.is_match("not.valid"));
         assert!(!NAMESPACE_PATTERN.is_match("not:valid"));
         assert!(!NAMESPACE_PATTERN.is_match("not/valid"));
-        assert!(!NAMESPACE_PATTERN.is_match("不valid"));
+        assert!(!NAMESPACE_PATTERN.is_match("不合法"));
     }
 
     #[test]
@@ -320,7 +334,7 @@ mod tests {
         assert!(!KEY_PATTERN.is_match("not-valid"));
         assert!(!KEY_PATTERN.is_match("not.valid"));
         assert!(!KEY_PATTERN.is_match("not:valid"));
-        assert!(!KEY_PATTERN.is_match("不valid"));
+        assert!(!KEY_PATTERN.is_match("不合法"));
     }
 
     #[test]
@@ -345,7 +359,7 @@ mod tests {
         assert!(!NAMESPACED_KEY_PATTERN.is_match(":utils"));
         assert!(!NAMESPACED_KEY_PATTERN.is_match("embers_utils"));
         assert!(!NAMESPACED_KEY_PATTERN.is_match("embers:utils:namespaced_key"));
-        assert!(!NAMESPACED_KEY_PATTERN.is_match("不valid"));
+        assert!(!NAMESPACED_KEY_PATTERN.is_match("不合法"));
     }
 
     #[test]

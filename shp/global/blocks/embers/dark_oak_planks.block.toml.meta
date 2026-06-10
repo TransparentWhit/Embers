@@ -1,0 +1,12 @@
+(
+    meta_format_version: "1.0",
+    processed_info: Some((
+        hash: (243, 227, 114, 90, 62, 171, 152, 16, 239, 37, 117, 157, 238, 219, 221, 16, 230, 17, 241, 105, 78, 165, 88, 190, 7, 56, 212, 136, 22, 224, 51, 12),
+        full_hash: (243, 227, 114, 90, 62, 171, 152, 16, 239, 37, 117, 157, 238, 219, 221, 16, 230, 17, 241, 105, 78, 165, 88, 190, 7, 56, 212, 136, 22, 224, 51, 12),
+        process_dependencies: [],
+    )),
+    asset: Load(
+        loader: "embers::pld::meta::RawMetadataLoader<embers::pld::meta::BlockMeta>",
+        settings: (),
+    ),
+)

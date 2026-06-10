@@ -7,10 +7,14 @@ pub mod reg;
 mod ui;
 pub mod utils;
 
+use crate::dim::Movements;
+use crate::pld::{DelegatingAssetReader, PAYLOADS_SOURCE};
 use avian3d::PhysicsPlugins;
 use avian3d::prelude::PhysicsSchedule;
 use bevy::DefaultPlugins;
 use bevy::asset::UnapprovedPathMode;
+use bevy::asset::io::file::FileAssetReader;
+use bevy::asset::io::{AssetSourceBuilder, AssetSourceId};
 use bevy::image::ImageSamplerDescriptor;
 use bevy::log::{Level, LogPlugin};
 use bevy::prelude::*;
@@ -60,12 +64,12 @@ fn main() {
         }
         None
     };
+    #[cfg(debug_assertions)]
     UNPROCESSED_ASSETS_ROOT
         .set(
             find_resource_root("pld", ".embers_payload_root")
                 .inspect(|path| info!("Found payload root: {}", path.display()))
                 .unwrap_or_else(|| {
-                    #[cfg(debug_assertions)]
                     warn!("Could not find payload root!");
                     Path::new("pld").to_path_buf()
                 }),
@@ -76,12 +80,20 @@ fn main() {
             find_resource_root("shp", ".embers_shipment_root")
                 .inspect(|path| info!("Found shipment root: {}", path.display()))
                 .unwrap_or_else(|| {
-                    warn!("Could not find shipment root!");
+                    error!("Could not find shipment root!");
                     Path::new("shp").to_path_buf()
                 }),
         )
         .unwrap();
-    app.add_plugins(
+    app.register_asset_source(
+        AssetSourceId::Name(PAYLOADS_SOURCE.clone()),
+        AssetSourceBuilder::new(|| {
+            Box::new(DelegatingAssetReader::new(FileAssetReader::new(
+                ASSETS_ROOT.get().unwrap().clone(),
+            )))
+        }),
+    )
+    .add_plugins(
         DefaultPlugins
             .build()
             .set(AssetPlugin {
@@ -114,7 +126,7 @@ fn main() {
     .add_plugins(
         PhysicsPlugins::default().with_collision_hooks::<dim::SourceExclusionCollisionHooks>(),
     )
-    .add_plugins(TnuaControllerPlugin::new(PhysicsSchedule))
+    .add_plugins(TnuaControllerPlugin::<Movements>::new(PhysicsSchedule))
     .add_plugins(TnuaAvian3dPlugin::new(PhysicsSchedule))
     .add_plugins(dim::plugin)
     .add_plugins(input::plugin)

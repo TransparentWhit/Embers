@@ -10,15 +10,17 @@ use crate::input::InteractionTrigger;
 use crate::pld::PayloadScope;
 use crate::reg::{Reg, RegMut, RegistryError, RegistryInitExt};
 use crate::utils::{Keyed, Namespaced, NamespacedKey};
-use avian3d::prelude::PhysicsLayer;
 use avian3d::prelude::*;
 use avian3d::schedule::LastPhysicsTick;
-use bevy::ecs::component::{Mutable, Tick};
+use bevy::ecs::change_detection::Tick;
+use bevy::ecs::component::Mutable;
 use bevy::ecs::query::QueryFilter;
 use bevy::ecs::system::{StaticSystemParam, SystemParam};
 use bevy::prelude::*;
 use bevy::time::Stopwatch;
 use bevy_hanabi::{EffectMaterial, ParticleEffect};
+use bevy_tnua::builtins::{TnuaBuiltinCrouch, TnuaBuiltinDash};
+use bevy_tnua::prelude::*;
 use derive_where::derive_where;
 use embers_macros::identify;
 use serde::{Deserialize, Serialize};
@@ -229,6 +231,13 @@ impl CollisionHooks for SourceExclusionCollisionHooks<'_, '_> {
         exclude(contacts.collider1, contacts.collider2)
             && exclude(contacts.collider2, contacts.collider1)
     }
+}
+
+#[derive(TnuaScheme, Debug)]
+#[scheme(basis = TnuaBuiltinWalk)]
+pub enum Movements {
+    Sneak(TnuaBuiltinCrouch),
+    Roll(TnuaBuiltinDash),
 }
 
 #[derive(Bundle, Clone, Debug)]
@@ -538,7 +547,7 @@ impl Default for Time {
 
 pub struct Dimension {
     key: NamespacedKey,
-    payloads: PayloadScope<'static>,
+    payloads: PayloadScope,
 }
 
 impl Keyed for Dimension {
@@ -554,7 +563,7 @@ impl Dimension {
             key,
         }
     }
-    pub fn payloads(&self) -> &PayloadScope<'_> {
+    pub fn payloads(&self) -> &PayloadScope {
         &self.payloads
     }
 }

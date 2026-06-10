@@ -258,42 +258,43 @@ fn update_player_camera(
 }
 
 fn update_hotbar(
+    mut commands: Commands,
     asset_server: Res<AssetServer>,
     player_inventory: Single<Ref<PlayerInventory>>,
     items: Query<&ItemStack>,
-    mut main_hand_slot: Single<(&mut ImageNode, &mut AnimatedTextureAtlas), With<MainHandSlot>>,
-    mut hotbar_slots: Query<
-        (&mut ImageNode, &mut AnimatedTextureAtlas, &HotbarSlot),
-        Without<MainHandSlot>,
-    >,
+    main_hand_slot: Single<Entity, With<MainHandSlot>>,
+    mut hotbar_slots: Query<(Entity, &HotbarSlot), Without<MainHandSlot>>,
 ) {
     if !player_inventory.is_changed() {
         return;
     }
     {
-        let (ref mut image_node, ref mut animated_texture) = *main_hand_slot;
-        (**image_node, **animated_texture) = match player_inventory.main_hand() {
-            Some(item) => GLOBAL_PAYLOADS.item_image(
-                &asset_server,
-                items
-                    .get(item)
-                    .expect("Inventory held an item that doesn't exist")
-                    .key(),
-            ),
-            None => default(),
-        };
+        commands
+            .entity(*main_hand_slot)
+            .insert(match player_inventory.main_hand() {
+                Some(item) => GLOBAL_PAYLOADS.item_image(
+                    &asset_server,
+                    items
+                        .get(item)
+                        .expect("Inventory held an item that doesn't exist")
+                        .key(),
+                ),
+                None => default(),
+            });
     }
-    for (ref mut image_node, ref mut animated_texture, hotbar_slot) in hotbar_slots.iter_mut() {
-        (**image_node, **animated_texture) = match player_inventory.hotbar(hotbar_slot.0) {
-            Some(item) => GLOBAL_PAYLOADS.item_image(
-                &asset_server,
-                items
-                    .get(item)
-                    .expect("Inventory held an item that doesn't exist")
-                    .key(),
-            ),
-            None => default(),
-        };
+    for (hotbar_entity, hotbar_slot) in hotbar_slots.iter_mut() {
+        commands
+            .entity(hotbar_entity)
+            .insert(match player_inventory.hotbar(hotbar_slot.0) {
+                Some(item) => GLOBAL_PAYLOADS.item_image(
+                    &asset_server,
+                    items
+                        .get(item)
+                        .expect("Inventory held an item that doesn't exist")
+                        .key(),
+                ),
+                None => default(),
+            });
     }
 }
 

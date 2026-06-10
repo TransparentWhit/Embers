@@ -3,25 +3,156 @@
 
 pub mod meta;
 
+use crate::GameState;
 use crate::pld::meta::ReloadMetadata;
-use crate::ui::AnimatedTextureAtlas;
+use crate::ui::TextureAtlasAnimation;
 use crate::utils::{Namespaced, NamespacedKey};
-use crate::{ASSETS_ROOT, GameState};
+use atomicow::CowArc;
 use bevy::app::App;
-use bevy::asset::{AssetPath, LoadedFolder};
+use bevy::asset::io::{AssetReader, AssetReaderError, ErasedAssetReader, PathStream, Reader};
+use bevy::asset::{AssetPath, LoadState, LoadedFolder};
 use bevy::prelude::*;
+use derive_where::derive_where;
 use std::collections::HashMap;
-use std::sync::LazyLock;
+use std::path::Path;
+use std::sync::{Arc, LazyLock};
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct PayloadScope<'scope> {
-    root: AssetPath<'scope>,
-    textures_root: AssetPath<'scope>,
-    models_root: AssetPath<'scope>,
+pub static PAYLOADS_SOURCE: CowArc<str> = CowArc::Static("payloads");
+
+pub struct DelegatingAssetReader {
+    inner: Box<dyn ErasedAssetReader>,
+    fallback: Option<Arc<DelegatingAssetReader>>,
 }
 
-impl<'scope> PayloadScope<'scope> {
-    pub fn new(root: impl Into<AssetPath<'scope>>) -> Self {
+impl DelegatingAssetReader {
+    pub fn new(inner: impl ErasedAssetReader) -> Self {
+        Self {
+            inner: Box::new(inner),
+            fallback: None,
+        }
+    }
+    pub fn new_delegating(
+        inner: impl ErasedAssetReader,
+        fallback: Arc<DelegatingAssetReader>,
+    ) -> Self {
+        Self {
+            inner: Box::new(inner),
+            fallback: Some(fallback),
+        }
+    }
+}
+
+impl AssetReader for DelegatingAssetReader {
+    #[inline]
+    async fn read<'reader>(
+        &'reader self,
+        path: &'reader Path,
+    ) -> Result<impl Reader + 'reader, AssetReaderError> {
+        match self.inner.read(path).await {
+            Ok(reader) => Ok(reader),
+            Err(err) => {
+                if matches!(err, AssetReaderError::NotFound(ref _path))
+                    && let Some(ref fallback) = self.fallback
+                {
+                    ErasedAssetReader::read(fallback.as_ref(), path).await
+                } else {
+                    Err(err)
+                }
+            }
+        }
+    }
+    #[inline]
+    async fn read_meta<'reader>(
+        &'reader self,
+        path: &'reader Path,
+    ) -> Result<impl Reader + 'reader, AssetReaderError> {
+        match self.inner.read_meta(path).await {
+            Ok(meta_reader) => Ok(meta_reader),
+            Err(err) => {
+                if matches!(err, AssetReaderError::NotFound(ref _path))
+                    && let Some(ref fallback) = self.fallback
+                {
+                    ErasedAssetReader::read_meta(fallback.as_ref(), path).await
+                } else {
+                    Err(err)
+                }
+            }
+        }
+    }
+    #[inline]
+    async fn read_directory<'reader>(
+        &'reader self,
+        path: &'reader Path,
+    ) -> Result<Box<PathStream>, AssetReaderError> {
+        match self.inner.read_directory(path).await {
+            Ok(directory) => Ok(directory),
+            Err(err) => {
+                if matches!(err, AssetReaderError::NotFound(ref _path))
+                    && let Some(ref fallback) = self.fallback
+                {
+                    ErasedAssetReader::read_directory(fallback.as_ref(), path).await
+                } else {
+                    Err(err)
+                }
+            }
+        }
+    }
+    #[inline]
+    async fn is_directory<'reader>(
+        &'reader self,
+        path: &'reader Path,
+    ) -> Result<bool, AssetReaderError> {
+        match self.inner.is_directory(path).await {
+            Ok(is_dir) => Ok(is_dir),
+            Err(err) => {
+                if matches!(err, AssetReaderError::NotFound(ref _path))
+                    && let Some(ref fallback) = self.fallback
+                {
+                    ErasedAssetReader::is_directory(fallback.as_ref(), path).await
+                } else {
+                    Err(err)
+                }
+            }
+        }
+    }
+}
+
+#[derive(Component)]
+#[derive_where(Default)]
+#[component(storage = "SparseSet")]
+pub struct OptionalPayload<A: Asset>(Handle<A>);
+
+pub fn resolve_optional_payload<A: Asset>(
+    on_present: impl Fn(&mut EntityCommands, Handle<A>) + Send + Sync + 'static,
+    on_absent: impl Fn(&mut EntityCommands) + Send + Sync + 'static,
+) -> impl Fn(Commands, Res<AssetServer>, Query<(Entity, &OptionalPayload<A>)>) {
+    move |mut commands, asset_server, query| {
+        for (entity, OptionalPayload(handle)) in &query {
+            let mut entity_commands = commands.entity(entity);
+            match asset_server.get_load_state(handle) {
+                Some(LoadState::Loaded) => {
+                    entity_commands.remove::<OptionalPayload<A>>();
+                    on_present(&mut entity_commands, handle.clone());
+                }
+                Some(LoadState::Failed(_)) => {
+                    entity_commands.remove::<OptionalPayload<A>>();
+                    on_absent(&mut entity_commands);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct PayloadScope {
+    root: AssetPath<'static>,
+    textures_root: AssetPath<'static>,
+    models_root: AssetPath<'static>,
+}
+
+impl PayloadScope {
+    pub fn new(root: impl Into<AssetPath<'static>>) -> Self {
         let root = root.into();
         Self {
             textures_root: root.resolve("textures").unwrap(),
@@ -62,7 +193,11 @@ impl<'scope> PayloadScope<'scope> {
         &self,
         asset_server: &AssetServer,
         key: &NamespacedKey,
-    ) -> (Handle<Image>, Option<(TextureAtlas, AnimatedTextureAtlas)>) {
+    ) -> (
+        Handle<Image>,
+        Handle<TextureAtlasLayout>,
+        Handle<TextureAtlasAnimation>,
+    ) {
         self.animated_texture(
             asset_server,
             &*format!("blocks/{}/{}", key.namespace(), key.key()),
@@ -73,21 +208,30 @@ impl<'scope> PayloadScope<'scope> {
         &self,
         asset_server: &AssetServer,
         path: impl Into<&'path str>,
-    ) -> (ImageNode, AnimatedTextureAtlas) {
-        let (node, animated) = self.image_node(asset_server, &*format!("ui/{}", path.into()));
-        (node.with_mode(NodeImageMode::Stretch), animated)
+    ) -> (
+        ImageNode,
+        OptionalPayload<TextureAtlasLayout>,
+        OptionalPayload<TextureAtlasAnimation>,
+    ) {
+        let (node, layout, animation) =
+            self.image_node(asset_server, &*format!("ui/{}", path.into()));
+        (node.with_mode(NodeImageMode::Stretch), layout, animation)
     }
     #[inline]
     pub fn item_image(
         &self,
         asset_server: &AssetServer,
         key: &NamespacedKey,
-    ) -> (ImageNode, AnimatedTextureAtlas) {
-        let (node, animated) = self.image_node(
+    ) -> (
+        ImageNode,
+        OptionalPayload<TextureAtlasLayout>,
+        OptionalPayload<TextureAtlasAnimation>,
+    ) {
+        let (node, layout, animation) = self.image_node(
             asset_server,
             &*format!("items/{}/{}", key.namespace(), key.key()),
         );
-        (node.with_mode(NodeImageMode::Stretch), animated)
+        (node.with_mode(NodeImageMode::Stretch), layout, animation)
     }
     #[inline]
     pub fn default_model(&self, asset_server: &AssetServer) -> Handle<Scene> {
@@ -98,13 +242,17 @@ impl<'scope> PayloadScope<'scope> {
         &self,
         asset_server: &AssetServer,
         path: impl Into<&'path str>,
-    ) -> (ImageNode, AnimatedTextureAtlas) {
-        let (image, animated_atlas) = self.animated_texture(asset_server, path);
-        if let Some((atlas, animated)) = animated_atlas {
-            (ImageNode::from_atlas_image(image, atlas), animated)
-        } else {
-            (ImageNode::new(image), default())
-        }
+    ) -> (
+        ImageNode,
+        OptionalPayload<TextureAtlasLayout>,
+        OptionalPayload<TextureAtlasAnimation>,
+    ) {
+        let (image, layout, animation) = self.animated_texture(asset_server, path);
+        (
+            ImageNode::new(image),
+            OptionalPayload(layout),
+            OptionalPayload(animation),
+        )
     }
     #[inline]
     fn scene<'path>(
@@ -153,34 +301,28 @@ impl<'scope> PayloadScope<'scope> {
         &self,
         asset_server: &AssetServer,
         path: impl Into<&'path str>,
-    ) -> (Handle<Image>, Option<(TextureAtlas, AnimatedTextureAtlas)>) {
+    ) -> (
+        Handle<Image>,
+        Handle<TextureAtlasLayout>,
+        Handle<TextureAtlasAnimation>,
+    ) {
         let path = path.into();
-        let atlas_path = self
-            .textures_root
-            .resolve(&format!("{}.atlas.toml", path))
-            .unwrap();
-        let animation_path = self
-            .textures_root
-            .resolve(&format!("{}.atlas_animation.toml", path))
-            .unwrap();
         (
             asset_server.load(
                 self.textures_root
                     .resolve(&format!("{}.png", path))
                     .unwrap(),
             ),
-            if {
-                let assets_root = ASSETS_ROOT.get().unwrap();
-                assets_root.join(atlas_path.path()).exists()
-                    && assets_root.join(animation_path.path()).exists()
-            } {
-                Some((
-                    TextureAtlas::from(asset_server.load(atlas_path)),
-                    AnimatedTextureAtlas::new(asset_server.load(animation_path)),
-                ))
-            } else {
-                None
-            },
+            asset_server.load(
+                self.textures_root
+                    .resolve(&format!("{}.atlas.toml", path))
+                    .unwrap(),
+            ),
+            asset_server.load(
+                self.textures_root
+                    .resolve(&format!("{}.atlas_animation.toml", path))
+                    .unwrap(),
+            ),
         )
     }
     #[inline]
@@ -207,16 +349,16 @@ fn load_global_payloads(mut asset_load_requests: MessageWriter<PayloadLoadReques
 }
 
 #[derive(Message)]
-pub struct PayloadLoadRequest(pub &'static PayloadScope<'static>);
+pub struct PayloadLoadRequest(pub &'static PayloadScope);
 
 #[derive(Message)]
 pub struct PayloadLoadedMessage {}
 
 #[derive(Message)]
-pub struct PayloadUnloadRequest(pub &'static PayloadScope<'static>);
+pub struct PayloadUnloadRequest(pub &'static PayloadScope);
 
 #[derive(Resource, Default)]
-struct LoadedPayloads(HashMap<UntypedHandle, &'static PayloadScope<'static>>);
+struct LoadedPayloads(HashMap<UntypedHandle, &'static PayloadScope>);
 
 fn payload_load_request_listener(
     mut requests: MessageReader<PayloadLoadRequest>,

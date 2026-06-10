@@ -10,7 +10,7 @@ use crate::dim::item::{
 use crate::dim::item::{InitialItemActions, ItemActionSlot};
 use crate::dim::{
     ActionStatus, ActionStatusComponent, Actions, ActionsComponent, CollisionLayer,
-    EntityInteraction, EntityInteractionEnvironment, EntityInteractions, Interactable,
+    EntityInteraction, EntityInteractionEnvironment, EntityInteractions, Interactable, Movements,
     update_action,
 };
 use crate::input::{DoubleClicks, InputButton, InteractionTrigger, just_pressed, pressed};
@@ -357,7 +357,7 @@ fn process_input_movement(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     window: Single<&Window, With<PrimaryWindow>>,
-    mut player: Single<(&Attributes, &mut TnuaController), With<Player>>,
+    mut player: Single<(&Attributes, &mut TnuaController<Movements>), With<Player>>,
     player_camera: Single<(&Camera, &PlayerCamera), With<PlayerCamera>>,
 ) {
     let (attributes, ref mut controller) = *player;
@@ -388,19 +388,26 @@ fn process_input_movement(
     } else {
         None
     };
-    controller.basis(TnuaBuiltinWalk {
-        float_height: FLOAT_HEIGHT,
-        desired_velocity: forward
+    controller
+        .basis_access()
+        .expect("Player should have a controller basis")
+        .input = &TnuaBuiltinWalk {
+        desired_motion: forward
             .map(|direction| direction.as_vec3() * attributes.0[&embers::MOVEMENT_SPEED].value())
             .unwrap_or_default(),
         desired_forward: forward,
         ..default()
-    });
+    };
     if pressed(&CONTROLS_ROLL, &keys, &mouse) {
-        controller.action(TnuaBuiltinDash {
+        controller.action(Movements::Roll(TnuaBuiltinDash {
+            displacement: forward
+                .map(|direction| {
+                    direction.as_vec3() * attributes.0[&embers::MOVEMENT_SPEED].value()
+                })
+                .unwrap_or_default(),
             desired_forward: forward,
             ..default()
-        });
+        }));
     }
 }
 
@@ -614,7 +621,7 @@ impl PlayerEquipmentItemActions {
 
 pub fn player(attribute_bases: &Registry<AttributeBase>) -> impl Bundle {
     (
-        living_actor(&KEY, attribute_bases, false),
+        living_actor(&KEY, attribute_bases, FLOAT_HEIGHT, false),
         Collider::cylinder(0.5, 1.7),
         Player {
             flops: 0,

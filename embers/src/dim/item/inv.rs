@@ -5,9 +5,8 @@ use crate::utils::Marker;
 use bevy::prelude::*;
 use std::any::type_name;
 use std::marker::PhantomData;
-use std::ops::{
-    Index, IndexMut, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
-};
+use std::ops::{Index, IndexMut, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive};
+use std::range::Range;
 use thiserror::Error;
 
 pub type InventorySlot = i8;
@@ -63,7 +62,7 @@ range_index_inventory!(RangeFrom<InventorySlot>, idx, idx.start as usize..);
 range_index_inventory!(RangeTo<InventorySlot>, idx, ..idx.end as usize);
 range_index_inventory!(RangeToInclusive<InventorySlot>, idx, ..idx.end as usize);
 range_index_inventory!(
-    Range<InventorySlot>,
+    std::ops::Range<InventorySlot>,
     idx,
     idx.start as usize..idx.end as usize
 );
@@ -151,8 +150,7 @@ fn try_stack(
 
 #[derive(Clone, Copy, Debug)]
 pub enum ItemSource<const N: usize, M: Marker> {
-    // TODO: Use range when #125687 stabilizes
-    InventoryRange(Entity, (InventorySlot, InventorySlot), PhantomData<M>),
+    InventoryRange(Entity, Range<InventorySlot>, PhantomData<M>),
     InventorySlot(Entity, InventorySlot, PhantomData<M>),
     ItemActor(Entity),
 }
@@ -166,10 +164,10 @@ impl ItemSource<0, ()> {
 impl<const N: usize, M: Marker> ItemSource<N, M> {
     pub fn inventory_range(
         inventory: Entity,
-        range: Range<InventorySlot>,
+        range: impl Into<Range<InventorySlot>>,
         _: &Inventory<N, M>,
     ) -> Self {
-        Self::InventoryRange(inventory, (range.start, range.end), PhantomData)
+        Self::InventoryRange(inventory, range.into(), PhantomData)
     }
     pub fn inventory_slot(inventory: Entity, slot: InventorySlot, _: &Inventory<N, M>) -> Self {
         Self::InventorySlot(inventory, slot, PhantomData)
@@ -216,8 +214,7 @@ impl<const N: usize, M: Marker> ItemSource<N, M> {
 
 #[derive(Clone, Copy, Debug)]
 pub enum ItemDestination<const N: usize, M: Marker> {
-    // TODO: Use range when #125687 stabilizes
-    InventoryRange(Entity, (InventorySlot, InventorySlot), PhantomData<M>),
+    InventoryRange(Entity, Range<InventorySlot>, PhantomData<M>),
     InventorySlot(Entity, InventorySlot, PhantomData<M>),
     ItemActor(Entity),
 }
@@ -231,10 +228,10 @@ impl ItemDestination<0, ()> {
 impl<const N: usize, M: Marker> ItemDestination<N, M> {
     pub fn inventory_range(
         inventory: Entity,
-        range: Range<InventorySlot>,
+        range: impl Into<Range<InventorySlot>>,
         _: &Inventory<N, M>,
     ) -> Self {
-        Self::InventoryRange(inventory, (range.start, range.end), PhantomData)
+        Self::InventoryRange(inventory, range.into(), PhantomData)
     }
     pub fn inventory_slot(inventory: Entity, slot: InventorySlot, _: &Inventory<N, M>) -> Self {
         Self::InventorySlot(inventory, slot, PhantomData)
@@ -457,7 +454,7 @@ impl<const SRC_N: usize, SrcM: Marker, const DST_N: usize, DstM: Marker> Command
             }
             (&ItemSource::InventoryRange(src_inventory, ref src_range, _), _) => {
                 let mut destination = self.destination.single();
-                for src_slot in src_range.0..src_range.1 {
+                for src_slot in src_range.iter() {
                     move_single(
                         &mut SingleItemSource::InventorySlot(src_inventory, src_slot, PhantomData),
                         &mut destination,
@@ -467,7 +464,7 @@ impl<const SRC_N: usize, SrcM: Marker, const DST_N: usize, DstM: Marker> Command
             }
             (_, &ItemDestination::InventoryRange(dst_inventory, ref dst_range, _)) => {
                 let mut source = self.source.single();
-                for dst_slot in dst_range.0..dst_range.1 {
+                for dst_slot in dst_range.iter() {
                     if move_single(
                         &mut source,
                         &mut SingleItemDestination::InventorySlot(

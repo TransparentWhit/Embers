@@ -5,10 +5,12 @@ pub mod player;
 
 use super::super::PhysicsPreset;
 use super::actor;
+use crate::dim::Movements;
 use crate::dim::actor::living::attributes::AttributeInstance;
 use crate::reg::{Registry, RegistryInitExt};
 use crate::utils::NamespacedKey;
 use bevy::prelude::*;
+use bevy_tnua::builtins::TnuaBuiltinWalkConfig;
 use bevy_tnua::prelude::*;
 use std::collections::HashMap;
 
@@ -29,6 +31,7 @@ impl AttributeBase {
 pub fn living_actor(
     key: &NamespacedKey,
     attribute_bases: &Registry<AttributeBase>,
+    float_height: f32,
     interactable: bool,
 ) -> impl Bundle {
     let attributes: HashMap<NamespacedKey, AttributeInstance> = attribute_bases
@@ -48,7 +51,14 @@ pub fn living_actor(
                 .unwrap_or(0.),
         ),
         Attributes(attributes),
-        TnuaController::default(),
+        {
+            let mut controller = TnuaController::<Movements>::default();
+            controller.basis_config = Some(TnuaBuiltinWalkConfig {
+                float_height,
+                ..default()
+            });
+            controller
+        },
     )
 }
 

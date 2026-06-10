@@ -7,12 +7,14 @@ use std::sync::LazyLock;
 
 pub static KEY: LazyLock<NamespacedKey> = LazyLock::new(|| NamespacedKey::new_embers("creeper"));
 
+const FLOAT_HEIGHT: f32 = 1.0;
+
 #[derive(Component, Debug)]
 pub struct Creeper {}
 
 pub fn creeper(attribute_bases: &Registry<AttributeBase>) -> impl Bundle {
     (
-        living_actor(&KEY, attribute_bases, false),
+        living_actor(&KEY, attribute_bases, FLOAT_HEIGHT, false),
         Collider::cylinder(0.5, 1.7),
         Creeper {},
     )

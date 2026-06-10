@@ -46,6 +46,7 @@ struct BlockMeta {
 #[derive(Deserialize, Debug)]
 struct BlockColliderMeta {
     template: NamespacedKey,
+    #[serde(default)]
     config: Table,
 }
 
@@ -98,6 +99,7 @@ struct ParticleMeta {
     spawn_cycles: u32,*/
 }
 
+#[derive(TypePath)]
 struct TextureAtlasMetadataLoader;
 
 impl AssetLoader for TextureAtlasMetadataLoader {
@@ -112,6 +114,7 @@ impl AssetLoader for TextureAtlasMetadataLoader {
     ) -> Result<Self::Asset, Self::Error> {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await?;
+        #[non_exhaustive]
         #[derive(Deserialize)]
         #[serde(rename_all = "snake_case", tag = "type")]
         enum TextureAtlasPreset {
@@ -143,6 +146,7 @@ impl AssetLoader for TextureAtlasMetadataLoader {
     }
 }
 
+#[derive(TypePath)]
 struct RawMetadataLoader<M: Asset + for<'de> Deserialize<'de>>(
     &'static [&'static str],
     PhantomData<M>,
@@ -175,7 +179,7 @@ impl<M: Asset + for<'de> Deserialize<'de>> AssetLoader for RawMetadataLoader<M> 
 
 #[derive(Event, Debug)]
 pub struct ReloadMetadata {
-    pub scope: &'static PayloadScope<'static>,
+    pub scope: &'static PayloadScope,
 }
 
 fn reload_metadata_plugin(app: &mut App) {
@@ -237,7 +241,7 @@ fn reload_metadata_plugin(app: &mut App) {
             StaticSystemInput((on_reload_metadata.scope, default()))
         })
         .pipe(process_meta::<
-            (InRef<PayloadScope<'static>>, In<TextureAtlasManifest>),
+            (InRef<PayloadScope>, In<TextureAtlasManifest>),
             BlockMeta,
             (
                 Res<AssetServer>,
@@ -277,7 +281,7 @@ fn reload_metadata_plugin(app: &mut App) {
                         block.collider.template
                     ),
                 }
-                let (image, animation) = payload_scope.block_texture(asset_server, &key);
+                let (image, layout, animation) = payload_scope.block_texture(asset_server, &key);
                 // TODO animations
                 block_atlas_manifest.add_texture(Some(image.id()), image);
             },
@@ -288,7 +292,11 @@ fn reload_metadata_plugin(app: &mut App) {
                 TextureAtlasManifest,
             )>,
              images: Res<Assets<Image>>| {
-                block_atlas_manifest.manifest(&images).build().unwrap();
+                block_atlas_manifest
+                    .manifest(&images)
+                    .unwrap()
+                    .build()
+                    .unwrap();
             },
         ),
     )

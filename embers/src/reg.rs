@@ -147,7 +147,7 @@ pub struct ValueIndex<T> {
     index: usize,
     #[cfg(debug_assertions)]
     generation: u32,
-    _marker: PhantomData<T>,
+    _marker: PhantomData<fn() -> T>,
 }
 
 impl<T> ValueIndex<T> {
@@ -179,7 +179,7 @@ pub struct TagIndex<T> {
     index: usize,
     #[cfg(debug_assertions)]
     generation: u32,
-    _marker: PhantomData<T>,
+    _marker: PhantomData<fn() -> T>,
 }
 
 impl<T> TagIndex<T> {
