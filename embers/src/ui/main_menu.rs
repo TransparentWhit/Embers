@@ -1,6 +1,6 @@
 use crate::GameState;
 use crate::dim::LOBBY;
-use crate::pld::PayloadLoadRequest;
+use crate::pld::{GLOBAL_PAYLOADS, PayloadLoadRequest};
 use crate::ui::loading_screen::Loading;
 use crate::ui::*;
 use bevy::color::palettes::basic::YELLOW;
@@ -21,7 +21,7 @@ enum MainMenuButton {
     Quit,
 }
 
-fn init(mut commands: Commands) {
+fn init(asset_server: Res<AssetServer>, mut commands: Commands) {
     commands.spawn((
         DespawnOnExit(GameState::MainMenu),
         Camera2d,
@@ -46,9 +46,9 @@ fn init(mut commands: Commands) {
                     Text2dShadow::default(),
                     TextColor(YELLOW.into())
                 ),
-                (ui_button("Play"), MainMenuButton::Play,),
-                (ui_button("Options"), MainMenuButton::Options,),
-                (ui_button("Quit"), MainMenuButton::Quit,),
+                (ui_button(&asset_server, "Play"), MainMenuButton::Play,),
+                (ui_button(&asset_server, "Options"), MainMenuButton::Options,),
+                (ui_button(&asset_server, "Quit"), MainMenuButton::Quit,),
             ]
         )],
     ));
@@ -68,7 +68,8 @@ fn menu_action(
                 MainMenuButton::Play => {
                     loading.set(Loading::World);
                     game_state.set(GameState::Loading);
-                    payload_load_requests.write(PayloadLoadRequest(LOBBY.payloads()));
+                    payload_load_requests
+                        .write(PayloadLoadRequest::new(LOBBY.payloads(), &GLOBAL_PAYLOADS));
                     menu_state.set(MainMenuState::Main);
                 }
                 MainMenuButton::Options => menu_state.set(MainMenuState::Options),

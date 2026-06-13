@@ -1,3 +1,5 @@
+float_height = 1
+
 [attributes]
 max_health = 20
-movement_speed = 3
+movement_speed = 0.5

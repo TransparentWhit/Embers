@@ -1,5 +1,6 @@
 pub mod physics;
 
+use crate::pld::{ActivePayloadScopes, Payloads};
 use bevy::asset::uuid::Uuid;
 use bevy::prelude::*;
 use regex::Regex;
@@ -272,15 +273,19 @@ impl TextureAtlasManifest {
     }
     pub fn manifest<'img>(
         &self,
+        asset_server: &AssetServer,
+        active_payload_scopes: &ActivePayloadScopes,
         images: &'img Assets<Image>,
     ) -> Result<TextureAtlasBuilder<'img>, TextureAtlasManifestError> {
         let mut builder = TextureAtlasBuilder::default();
         for (image_id, image) in self.textures_to_place.iter() {
             builder.add_texture(
                 image_id.clone(),
-                images.get(image).ok_or_else(|| {
-                    TextureAtlasManifestError::InvalidTextureHandle(image.clone())
-                })?,
+                images
+                    .get_pld(asset_server, active_payload_scopes, image)
+                    .ok_or_else(|| {
+                        TextureAtlasManifestError::InvalidTextureHandle(image.clone())
+                    })?,
             );
         }
         Ok(builder)

@@ -2,15 +2,38 @@ pub mod dim;
 pub mod loading_screen;
 pub mod main_menu;
 
-use crate::pld::resolve_optional_payload;
+use crate::pld::{GLOBAL_PAYLOADS, resolve_optional_payload};
+use crate::utils::NamespacedKey;
+use bevy::color::palettes::basic::WHITE;
 use bevy::ecs::system::NonSendMarker;
 use bevy::prelude::*;
+use bevy::text::FontSmoothing;
 use bevy::window::PrimaryWindow;
 use bevy::winit::WINIT_WINDOWS;
 use serde::Deserialize;
+use std::sync::LazyLock;
 use winit::window::Icon;
 
-fn ui_button(label: impl Into<String>) -> impl Bundle {
+static UI_FONT: LazyLock<NamespacedKey> = LazyLock::new(|| NamespacedKey::new_embers("polygon"));
+
+const BUTTON_BACKGROUND_DEFAULT: BackgroundColor = BackgroundColor(Color::srgb(0.1, 0.1, 0.1));
+
+fn ui_text(
+    asset_server: &AssetServer,
+    text: impl Into<String>,
+    color: Color,
+    size: f32,
+) -> impl Bundle {
+    (
+        Text::new(text),
+        TextColor(color),
+        TextFont::from_font_size(size)
+            .with_font_smoothing(FontSmoothing::None)
+            .with_font(GLOBAL_PAYLOADS.font(asset_server, &UI_FONT)),
+    )
+}
+
+fn ui_button(asset_server: &AssetServer, label: impl Into<String>) -> impl Bundle {
     (
         Button,
         Node {
@@ -22,11 +45,9 @@ fn ui_button(label: impl Into<String>) -> impl Bundle {
             ..default()
         },
         BUTTON_BACKGROUND_DEFAULT,
-        children![(Text::new(label))],
+        children![ui_text(asset_server, label, WHITE.into(), 20.)],
     )
 }
-
-const BUTTON_BACKGROUND_DEFAULT: BackgroundColor = BackgroundColor(Color::srgb(0.1, 0.1, 0.1));
 
 #[derive(Asset, Deserialize, TypePath, Debug)]
 pub struct TextureAtlasAnimation {

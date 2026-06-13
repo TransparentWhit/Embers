@@ -1,10 +1,11 @@
-use crate::dim::Particles;
+use crate::dim::actor::ACTOR_NAMESPACE;
 use crate::dim::actor::living::AttributeBase;
 use crate::dim::block::{
     BlockCollider, BlockColliderTemplate, BlockModel, BlockVoxelModelTemplate,
 };
 use crate::dim::item::{ItemAction, ItemActionTemplate, ItemComponent};
-use crate::pld::PayloadScope;
+use crate::dim::{Movements, MovementsConfig, Particles};
+use crate::pld::{ActivePayloadScopes, PayloadScope};
 use crate::reg::{RegBoxed, RegMut, RegistryBoxed};
 use crate::ui::TextureAtlasAnimation;
 use crate::utils::{NamespacedKey, TextureAtlasManifest, path_to_unix_components};
@@ -14,12 +15,14 @@ use bevy::asset::{AssetLoader, AssetServer, LoadContext};
 use bevy::ecs::system::{StaticSystemInput, StaticSystemParam, SystemParam};
 use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
+use bevy_tnua::builtins::TnuaBuiltinWalkConfig;
 use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::LazyLock;
 use toml::{Table, from_slice};
+use uuid::Uuid;
 
 static ACTOR_BASE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"actors/(?P<namespace>[A-Za-z0-9_]+)(?P<key>(?:/[A-Za-z0-9_]+)+)\.actor\.toml$")
@@ -28,6 +31,8 @@ static ACTOR_BASE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 
 #[derive(Asset, Deserialize, TypePath, Debug)]
 struct ActorBase {
+    #[serde(default)]
+    float_height: f32,
     #[serde(default)]
     attributes: HashMap<NamespacedKey, f32>,
 }
@@ -222,10 +227,27 @@ fn reload_metadata_plugin(app: &mut App) {
             attribute_bases.clear();
             StaticSystemInput(())
         })
-        .pipe(process_meta::<(), ActorBase, RegMut<AttributeBase>>(
+        .pipe(process_meta::<
+            (),
+            ActorBase,
+            (ResMut<Assets<MovementsConfig>>, RegMut<AttributeBase>),
+        >(
             &ACTOR_BASE_PATTERN,
             "actor_base",
-            |key, base, attribute_bases, ()| {
+            |key, base, (movements, attribute_bases), ()| {
+                movements
+                    .insert(
+                        Uuid::new_v5(&ACTOR_NAMESPACE, key.to_string().as_bytes()),
+                        MovementsConfig {
+                            basis: TnuaBuiltinWalkConfig {
+                                float_height: base.float_height,
+                                ..default()
+                            },
+                            sneak: default(),
+                            roll: default(),
+                        },
+                    )
+                    .expect("Failed to register movement configuration");
                 attribute_bases
                     .register(key, AttributeBase::new(base.attributes.clone()))
                     .expect("Failed to register attribute bases");
@@ -291,9 +313,11 @@ fn reload_metadata_plugin(app: &mut App) {
                 &PayloadScope,
                 TextureAtlasManifest,
             )>,
+             asset_server: Res<AssetServer>,
+             active_payload_scopes: Res<ActivePayloadScopes>,
              images: Res<Assets<Image>>| {
                 block_atlas_manifest
-                    .manifest(&images)
+                    .manifest(&asset_server, &active_payload_scopes, &images)
                     .unwrap()
                     .build()
                     .unwrap();

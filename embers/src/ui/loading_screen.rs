@@ -1,5 +1,6 @@
 use crate::GameState;
 use crate::pld::{GLOBAL_PAYLOADS, PayloadLoadedMessage};
+use crate::ui::ui_text;
 use bevy::app::App;
 use bevy::color::palettes::css::YELLOW;
 use bevy::prelude::*;
@@ -41,11 +42,7 @@ fn init(mut commands: Commands, asset_server: Res<AssetServer>) {
                     align_items: AlignItems::Center,
                     ..default()
                 },
-                children![(
-                    Text::new("Loading..."),
-                    TextFont { ..default() },
-                    TextColor(YELLOW.into())
-                ),]
+                children![ui_text(&asset_server, "Loading...", YELLOW.into(), 20.)]
             ),
             (
                 Node {

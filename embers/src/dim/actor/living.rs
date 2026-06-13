@@ -10,9 +10,10 @@ use crate::dim::actor::living::attributes::AttributeInstance;
 use crate::reg::{Registry, RegistryInitExt};
 use crate::utils::NamespacedKey;
 use bevy::prelude::*;
-use bevy_tnua::builtins::TnuaBuiltinWalkConfig;
 use bevy_tnua::prelude::*;
 use std::collections::HashMap;
+use std::marker::PhantomData;
+use uuid::Uuid;
 
 #[derive(Component, Debug)]
 pub struct Health(pub f32);
@@ -30,8 +31,8 @@ impl AttributeBase {
 
 pub fn living_actor(
     key: &NamespacedKey,
+    uuid: &Uuid,
     attribute_bases: &Registry<AttributeBase>,
-    float_height: f32,
     interactable: bool,
 ) -> impl Bundle {
     let attributes: HashMap<NamespacedKey, AttributeInstance> = attribute_bases
@@ -51,14 +52,8 @@ pub fn living_actor(
                 .unwrap_or(0.),
         ),
         Attributes(attributes),
-        {
-            let mut controller = TnuaController::<Movements>::default();
-            controller.basis_config = Some(TnuaBuiltinWalkConfig {
-                float_height,
-                ..default()
-            });
-            controller
-        },
+        TnuaController::<Movements>::default(),
+        TnuaConfig::<Movements>(Handle::Uuid(uuid.clone(), PhantomData)),
     )
 }
 

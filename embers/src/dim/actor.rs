@@ -5,6 +5,9 @@ pub mod projectile;
 
 use crate::GameState;
 use bevy::prelude::*;
+use uuid::{Uuid, uuid};
+
+pub static ACTOR_NAMESPACE: Uuid = uuid!("9e037d1a-048d-4784-8ec1-0655421951b1");
 
 #[derive(Component, Debug)]
 pub struct Actor;

@@ -1,5 +1,6 @@
 use super::{AttributeBase, Attributes, living_actor};
 use crate::GameState;
+use crate::dim::actor::ACTOR_NAMESPACE;
 use crate::dim::actor::living::attributes::embers;
 use crate::dim::item::inv::{
     Inventory, InventorySlot, ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt,
@@ -27,8 +28,10 @@ use bevy_tnua::builtins::TnuaBuiltinDash;
 use bevy_tnua::prelude::*;
 use std::marker::PhantomData;
 use std::ops::Range;
+use std::string::ToString;
 use std::sync::{LazyLock, RwLock};
 use std::time::Duration;
+use uuid::Uuid;
 
 macro_rules! controls {
     ($ident:ident, M@$default_mouse:ident) => {
@@ -388,16 +391,14 @@ fn process_input_movement(
     } else {
         None
     };
-    controller
-        .basis_access()
-        .expect("Player should have a controller basis")
-        .input = &TnuaBuiltinWalk {
+    controller.basis = TnuaBuiltinWalk {
         desired_motion: forward
             .map(|direction| direction.as_vec3() * attributes.0[&embers::MOVEMENT_SPEED].value())
             .unwrap_or_default(),
         desired_forward: forward,
         ..default()
     };
+    controller.initiate_action_feeding();
     if pressed(&CONTROLS_ROLL, &keys, &mouse) {
         controller.action(Movements::Roll(TnuaBuiltinDash {
             displacement: forward
@@ -413,7 +414,8 @@ fn process_input_movement(
 
 pub static KEY: LazyLock<NamespacedKey> = LazyLock::new(|| NamespacedKey::new_embers("player"));
 
-const FLOAT_HEIGHT: f32 = 1.0;
+pub static UUID: LazyLock<Uuid> =
+    LazyLock::new(|| Uuid::new_v5(&ACTOR_NAMESPACE, KEY.to_string().as_bytes()));
 
 #[derive(Component, Debug)]
 #[require(
@@ -621,7 +623,7 @@ impl PlayerEquipmentItemActions {
 
 pub fn player(attribute_bases: &Registry<AttributeBase>) -> impl Bundle {
     (
-        living_actor(&KEY, attribute_bases, FLOAT_HEIGHT, false),
+        living_actor(&KEY, &UUID, attribute_bases, false),
         Collider::cylinder(0.5, 1.7),
         Player {
             flops: 0,
