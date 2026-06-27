@@ -1,5 +1,5 @@
+use super::{ItemComponent, ItemStack, MaxStackSize, StackCount};
 use crate::dim::actor::item_actor::ItemActor;
-use crate::dim::item::{ItemComponent, ItemStack, MaxStackSize, StackCount};
 use crate::reg::{OrRegistry, Registry, RegistryBoxed};
 use crate::utils::Marker;
 use bevy::prelude::*;

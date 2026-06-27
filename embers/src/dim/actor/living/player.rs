@@ -1,7 +1,6 @@
+use super::attributes::embers;
 use super::{AttributeBase, Attributes, living_actor};
-use crate::GameState;
-use crate::dim::actor::ACTOR_NAMESPACE;
-use crate::dim::actor::living::attributes::embers;
+use crate::dim::actor::MOVEMENT_CONFIG_NAMESPACE;
 use crate::dim::item::inv::{
     Inventory, InventorySlot, ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt,
 };
@@ -17,6 +16,7 @@ use crate::dim::{
 use crate::input::{DoubleClicks, InputButton, InteractionTrigger, just_pressed, pressed};
 use crate::reg::{OrRegistry, Reg, Registry};
 use crate::ui::dim::PlayerCamera;
+use crate::ui::{ActiveOverlay, GameState};
 use crate::utils::{Keyed, NamespacedKey};
 use avian3d::prelude::*;
 use bevy::ecs::schedule::ScheduleConfigs;
@@ -69,6 +69,24 @@ controls![CONTROLS_HOTBARS, HOTBAR_SLOTS as usize,
 controls!(CONTROLS_SWAP_OFF_HAND, K@KeyF);
 controls!(CONTROLS_INVENTORY, K@KeyR);
 
+fn process_input_toggle_inventory(
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    active_overlay: Res<State<ActiveOverlay>>,
+    mut next_overlay: ResMut<NextState<ActiveOverlay>>,
+) {
+    if just_pressed(&CONTROLS_INVENTORY, &keys, &mouse) {
+        match **active_overlay {
+            ActiveOverlay::HeadsUpDisplay | ActiveOverlay::GatewayMenu => {
+                next_overlay.set(ActiveOverlay::Inventory)
+            }
+            ActiveOverlay::Inventory => next_overlay.set(ActiveOverlay::HeadsUpDisplay),
+            ActiveOverlay::OptionsMain => {}
+            active_overlay => unreachable!("Unexpected active overlay: {:#?}", active_overlay),
+        }
+    }
+}
+
 static ENTITY_INTERACTION_COLLIDER: LazyLock<Collider> =
     LazyLock::new(|| Collider::cylinder(3., 2.));
 
@@ -79,7 +97,8 @@ fn process_input_entity_interactions_schedule() -> ScheduleConfigs<ScheduleSyste
      double_clicks: Res<DoubleClicks>,
      mut player: Single<(Entity, &mut PlayerEntityInteractions, &GlobalTransform), With<Player>>,
      interactables: Query<(&Interactable, &GlobalTransform)>,
-     entity_interaction_reg: Reg<EntityInteraction>|
+     entity_interaction_reg: Reg<EntityInteraction>,
+     active_overlay: Res<State<ActiveOverlay>>|
      -> (Entity, (), Option<InteractionTrigger>, Option<Entity>) {
         let (player, ref mut player_interactions, transform) = *player;
         **player_interactions = PlayerEntityInteractions::default();
@@ -92,7 +111,8 @@ fn process_input_entity_interactions_schedule() -> ScheduleConfigs<ScheduleSyste
                 Some(InteractionTrigger::Click)
             } else {
                 None
-            },
+            }
+            .take_if(|_trigger| matches!(**active_overlay, ActiveOverlay::HeadsUpDisplay)),
             spatial_query
                 .shape_intersections(
                     &ENTITY_INTERACTION_COLLIDER,
@@ -170,7 +190,8 @@ fn process_input_item_actions_schedule() -> ScheduleConfigs<ScheduleSystem> {
                     ),
                     With<Player>,
                 >,
-                      off_hand_swapped_reader: MessageReader<OffHandSwapped>|
+                      off_hand_swapped_reader: MessageReader<OffHandSwapped>,
+                      active_overlay: Res<State<ActiveOverlay>>|
                       -> (
                     Entity,
                     EquipmentSlot,
@@ -190,7 +211,8 @@ fn process_input_item_actions_schedule() -> ScheduleConfigs<ScheduleSystem> {
                         Some(InteractionTrigger::Click)
                     } else {
                         None
-                    };
+                    }
+                    .take_if(|_trigger| matches!(**active_overlay, ActiveOverlay::HeadsUpDisplay));
                     if matches!(equipment_slot, EquipmentSlot::OffHand)
                         && match *action_status.get(EquipmentSlot::MainHand) {
                             ActionStatus::Idle => false,
@@ -319,7 +341,7 @@ fn update_equipment_slot_actions(
         });
 }
 
-pub fn process_input_hotbar(
+pub fn process_input_hotbar_in_hud(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
@@ -362,10 +384,12 @@ fn process_input_movement(
     window: Single<&Window, With<PrimaryWindow>>,
     mut player: Single<(&Attributes, &mut TnuaController<Movements>), With<Player>>,
     player_camera: Single<(&Camera, &PlayerCamera), With<PlayerCamera>>,
+    active_overlay: Res<State<ActiveOverlay>>,
 ) {
     let (attributes, ref mut controller) = *player;
     let forward = if pressed(&CONTROLS_MOVEMENT, &keys, &mouse)
         && let Some(physical_cursor_position) = window.physical_cursor_position()
+        && matches!(**active_overlay, ActiveOverlay::HeadsUpDisplay)
     {
         let (camera, camera_config) = *player_camera;
         match camera_config {
@@ -399,7 +423,9 @@ fn process_input_movement(
         ..default()
     };
     controller.initiate_action_feeding();
-    if pressed(&CONTROLS_ROLL, &keys, &mouse) {
+    if pressed(&CONTROLS_ROLL, &keys, &mouse)
+        && matches!(**active_overlay, ActiveOverlay::HeadsUpDisplay)
+    {
         controller.action(Movements::Roll(TnuaBuiltinDash {
             displacement: forward
                 .map(|direction| {
@@ -415,7 +441,7 @@ fn process_input_movement(
 pub static KEY: LazyLock<NamespacedKey> = LazyLock::new(|| NamespacedKey::new_embers("player"));
 
 pub static UUID: LazyLock<Uuid> =
-    LazyLock::new(|| Uuid::new_v5(&ACTOR_NAMESPACE, KEY.to_string().as_bytes()));
+    LazyLock::new(|| Uuid::new_v5(&MOVEMENT_CONFIG_NAMESPACE, KEY.to_string().as_bytes()));
 
 #[derive(Component, Debug)]
 #[require(
@@ -634,14 +660,19 @@ pub fn player(attribute_bases: &Registry<AttributeBase>) -> impl Bundle {
 }
 
 pub(in crate::dim) fn plugin(app: &mut App) {
-    app.add_message::<OffHandSwapped>().add_systems(
-        Update,
-        (
-            process_input_entity_interactions_schedule(),
-            process_input_item_actions_schedule().after(process_input_hotbar),
-            process_input_hotbar,
-            process_input_movement,
+    app.add_message::<OffHandSwapped>()
+        .add_systems(
+            PreUpdate,
+            process_input_toggle_inventory.run_if(in_state(GameState::Dimension)),
         )
-            .run_if(in_state(GameState::Dimension)),
-    );
+        .add_systems(
+            Update,
+            (
+                process_input_entity_interactions_schedule(),
+                process_input_item_actions_schedule().after(process_input_hotbar_in_hud),
+                process_input_hotbar_in_hud.run_if(in_state(ActiveOverlay::HeadsUpDisplay)),
+                process_input_movement,
+            )
+                .run_if(in_state(GameState::Dimension)),
+        );
 }

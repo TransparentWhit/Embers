@@ -1,7 +1,6 @@
-use super::super::PhysicsPreset;
-use crate::dim::Interactable;
 use crate::dim::actor::actor;
-use crate::pld::GLOBAL_PAYLOADS;
+use crate::dim::{Interactable, PhysicsPreset};
+use crate::pld::{PayloadManager, default_model};
 use crate::utils::NamespacedKey;
 use avian3d::prelude::*;
 use bevy::ecs::relationship::Relationship;
@@ -37,12 +36,16 @@ impl<R: Relationship, C: Bundle> SpawnableList<R> for SpawnItem<C> {
 pub struct ItemActor(pub Entity);
 
 #[inline]
-fn item_actor(asset_server: &AssetServer) -> impl Bundle {
+fn item_actor(
+    payload_manager: &PayloadManager,
+    asset_server: &AssetServer,
+    scenes: &Assets<Scene>,
+) -> impl Bundle {
     (
         actor(),
         PhysicsPreset::Phantom.physics(true),
         Collider::cuboid(0.25, 0.25, 0.25),
-        SceneRoot(GLOBAL_PAYLOADS.default_model(asset_server)),
+        SceneRoot(default_model(payload_manager, asset_server, scenes)),
         Interactable {
             distance_factor: 1.,
             initial_click: Some(INTERACTION_PICKUP.clone()),
@@ -51,10 +54,26 @@ fn item_actor(asset_server: &AssetServer) -> impl Bundle {
     )
 }
 
-pub fn item_actor_for(asset_server: &AssetServer, item: Entity) -> impl Bundle {
-    (item_actor(asset_server), ItemActor(item))
+pub fn item_actor_for(
+    payload_manager: &PayloadManager,
+    asset_server: &AssetServer,
+    scenes: &Assets<Scene>,
+    item: Entity,
+) -> impl Bundle {
+    (
+        item_actor(payload_manager, asset_server, scenes),
+        ItemActor(item),
+    )
 }
 
-pub fn item_actor_of(asset_server: &AssetServer, item: impl Bundle) -> impl Bundle {
-    (item_actor(asset_server), Children::spawn(SpawnItem(item)))
+pub fn item_actor_of(
+    payload_manager: &PayloadManager,
+    asset_server: &AssetServer,
+    scenes: &Assets<Scene>,
+    item: impl Bundle,
+) -> impl Bundle {
+    (
+        item_actor(payload_manager, asset_server, scenes),
+        Children::spawn(SpawnItem(item)),
+    )
 }

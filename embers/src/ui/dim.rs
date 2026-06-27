@@ -1,17 +1,12 @@
-use crate::GameState;
-use crate::dim::PhysicsPreset;
+use super::{GameState, RootNode};
 use crate::dim::actor::item_actor::item_actor_of;
 use crate::dim::actor::living::AttributeBase;
 use crate::dim::actor::living::dummy::dummy;
-use crate::dim::actor::living::player::{
-    HOTBAR_SLOTS, Player, PlayerInventory, SelectedHotbarSlot, player, process_input_hotbar,
-};
-use crate::dim::item::inv::InventorySlot;
-use crate::dim::item::{ItemStack, sword, tnt};
-use crate::pld::GLOBAL_PAYLOADS;
+use crate::dim::actor::living::player::{Player, player};
+use crate::dim::item::{sword, tnt};
+use crate::dim::{PhysicsPreset, dimensional_gateway};
+use crate::pld::PayloadManager;
 use crate::reg::Reg;
-use crate::ui::AnimatedTextureAtlas;
-use crate::utils::Keyed;
 use avian3d::prelude::*;
 use bevy::camera::{ScalingMode, Viewport};
 use bevy::post_process::bloom::Bloom;
@@ -19,13 +14,8 @@ use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowResized};
 use std::ops::DerefMut;
 
-#[derive(States, Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
-enum DimensionState {
-    Main,
-    Options,
-    #[default]
-    Disabled,
-}
+#[derive(Component)]
+pub struct DimensionRootNode;
 
 #[derive(Component)]
 struct Ground;
@@ -40,23 +30,17 @@ pub enum PlayerCamera {
     },
 }
 
-#[derive(Component, Debug)]
-struct HotbarSlot(InventorySlot);
-
-#[derive(Component)]
-struct HotbarSelection;
-
-#[derive(Component)]
-struct MainHandSlot;
-
 fn init(
     mut commands: Commands,
+    payload_manager: Res<PayloadManager>,
     asset_server: Res<AssetServer>,
+    scenes: Res<Assets<Scene>>,
     attribute_bases: Reg<AttributeBase>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     commands.spawn((
+        RootNode,
         DespawnOnExit(GameState::Dimension),
         Transform::default(),
         Node {
@@ -69,92 +53,12 @@ fn init(
         },
         children![
             (
+                DimensionRootNode,
                 Node {
                     width: percent(100),
                     height: percent(100),
                     ..default()
                 },
-                children![(
-                    Node {
-                        left: percent(50),
-                        bottom: px(7),
-                        margin: UiRect::left(px(-92.5)),
-                        position_type: PositionType::Absolute,
-                        width: px(185),
-                        height: px(18),
-                        display: Display::Flex,
-                        flex_direction: FlexDirection::Row,
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        ..default()
-                    },
-                    children![
-                        (
-                            Node {
-                                width: px(122),
-                                height: px(22),
-                                margin: UiRect::horizontal(px(3)),
-                                ..default()
-                            },
-                            GLOBAL_PAYLOADS.ui_image(&asset_server, "hotbar"),
-                            Children::spawn({
-                                let mut hotbar_slots = Vec::with_capacity(HOTBAR_SLOTS as usize);
-                                for i in 0..HOTBAR_SLOTS {
-                                    hotbar_slots.push((
-                                        Node {
-                                            left: px(1),
-                                            top: px(1),
-                                            width: px(16),
-                                            height: px(16),
-                                            margin: UiRect::all(px(2)),
-                                            ..default()
-                                        },
-                                        ImageNode::default(),
-                                        AnimatedTextureAtlas::default(),
-                                        HotbarSlot(i),
-                                    ));
-                                }
-                                (
-                                    hotbar_slots,
-                                    Spawn((
-                                        Node {
-                                            position_type: PositionType::Absolute,
-                                            left: px(-1),
-                                            top: px(-1),
-                                            width: px(24),
-                                            height: px(23),
-                                            ..default()
-                                        },
-                                        GLOBAL_PAYLOADS.ui_image(&asset_server, "hotbar_selection"),
-                                        HotbarSelection,
-                                    )),
-                                )
-                            })
-                        ),
-                        (
-                            Node {
-                                width: px(22),
-                                height: px(22),
-                                margin: UiRect::horizontal(px(3)),
-                                ..default()
-                            },
-                            GLOBAL_PAYLOADS.ui_image(&asset_server, "main_hand"),
-                            children![(
-                                Node {
-                                    left: px(1),
-                                    top: px(1),
-                                    width: px(16),
-                                    height: px(16),
-                                    margin: UiRect::all(px(2)),
-                                    ..default()
-                                },
-                                ImageNode::default(),
-                                AnimatedTextureAtlas::default(),
-                                MainHandSlot,
-                            ),]
-                        ),
-                    ],
-                ),]
             ),
             (
                 Camera::default(),
@@ -184,6 +88,7 @@ fn init(
                 Ground,
                 Collider::heightfield(vec![vec![0.0, 0.0], vec![0.0, 0.0]], Vec3::splat(20.)),
             ),
+            (dimensional_gateway(&asset_server),),
             (
                 Mesh3d(
                     meshes.add(
@@ -200,15 +105,20 @@ fn init(
                 LinearVelocity::from(Vec3::new(0., 10., 0.)),
             ),
             (
-                dummy(&asset_server, attribute_bases.as_ref()),
+                dummy(
+                    &payload_manager,
+                    &asset_server,
+                    &scenes,
+                    attribute_bases.as_ref()
+                ),
                 Transform::from_xyz(5.0, 0.5, 0.0)
             ),
             (
-                item_actor_of(&asset_server, sword()),
+                item_actor_of(&payload_manager, &asset_server, &scenes, sword()),
                 Transform::from_xyz(2.0, 1.0, 0.0),
             ),
             (
-                item_actor_of(&asset_server, tnt()),
+                item_actor_of(&payload_manager, &asset_server, &scenes, tnt()),
                 Transform::from_xyz(2.0, 1.0, 0.0),
             ),
         ],
@@ -257,70 +167,8 @@ fn update_player_camera(
     }
 }
 
-fn update_hotbar(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    player_inventory: Single<Ref<PlayerInventory>>,
-    items: Query<&ItemStack>,
-    main_hand_slot: Single<Entity, With<MainHandSlot>>,
-    mut hotbar_slots: Query<(Entity, &HotbarSlot), Without<MainHandSlot>>,
-) {
-    if !player_inventory.is_changed() {
-        return;
-    }
-    {
-        commands
-            .entity(*main_hand_slot)
-            .insert(match player_inventory.main_hand() {
-                Some(item) => GLOBAL_PAYLOADS.item_image(
-                    &asset_server,
-                    items
-                        .get(item)
-                        .expect("Inventory held an item that doesn't exist")
-                        .key(),
-                ),
-                None => default(),
-            });
-    }
-    for (hotbar_entity, hotbar_slot) in hotbar_slots.iter_mut() {
-        commands
-            .entity(hotbar_entity)
-            .insert(match player_inventory.hotbar(hotbar_slot.0) {
-                Some(item) => GLOBAL_PAYLOADS.item_image(
-                    &asset_server,
-                    items
-                        .get(item)
-                        .expect("Inventory held an item that doesn't exist")
-                        .key(),
-                ),
-                None => default(),
-            });
-    }
-}
-
-fn update_inventory(player_inventory: Single<&PlayerInventory>) {}
-
-fn update_hotbar_selection(
-    player: Single<Ref<SelectedHotbarSlot>, With<Player>>,
-    mut hotbar_selection_node: Single<&mut Node, With<HotbarSelection>>,
-) {
-    let ref selected_hotbar_slot = *player;
-    if selected_hotbar_slot.is_changed() {
-        **hotbar_selection_node = Node {
-            position_type: PositionType::Absolute,
-            left: px(-1 + selected_hotbar_slot.0 * 20),
-            top: px(-1),
-            width: px(24),
-            height: px(23),
-            ..default()
-        };
-    }
-}
-
 pub(super) fn plugin(app: &mut App) {
-    app.add_systems(OnEnter(GameState::Dimension), (init, resize_camera).chain());
-    app.add_systems(Update, resize_camera.run_if(on_message::<WindowResized>));
-    app.add_systems(Update, update_player_camera);
-    app.add_systems(Update, update_hotbar.after(process_input_hotbar));
-    app.add_systems(Update, update_hotbar_selection);
+    app.add_systems(OnEnter(GameState::Dimension), (init, resize_camera).chain())
+        .add_systems(Update, resize_camera.run_if(on_message::<WindowResized>))
+        .add_systems(Update, update_player_camera);
 }

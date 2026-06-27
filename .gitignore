@@ -1,4 +1,5 @@
 target/
+**/imported_assets/log
 shp/**
 !shp/**/
 !shp/.embers_shipment_root

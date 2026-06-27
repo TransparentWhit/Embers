@@ -3,13 +3,12 @@ pub mod block;
 mod chunk;
 pub mod item;
 
-use crate::dim::actor::living::player;
-use crate::dim::actor::living::player::{Player, PlayerInventory};
-use crate::dim::item::inv::{ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt};
 use crate::input::InteractionTrigger;
-use crate::pld::PayloadScope;
 use crate::reg::{Reg, RegMut, RegistryError, RegistryInitExt};
-use crate::utils::{Keyed, Namespaced, NamespacedKey};
+use crate::ui::ActiveOverlay;
+use crate::utils::{Keyed, NamespacedKey};
+use actor::living::player;
+use actor::living::player::{Player, PlayerInventory};
 use avian3d::prelude::*;
 use avian3d::schedule::LastPhysicsTick;
 use bevy::ecs::change_detection::Tick;
@@ -18,15 +17,72 @@ use bevy::ecs::query::QueryFilter;
 use bevy::ecs::system::{StaticSystemParam, SystemParam};
 use bevy::prelude::*;
 use bevy::time::Stopwatch;
-use bevy_hanabi::{EffectMaterial, ParticleEffect};
 use bevy_tnua::builtins::{TnuaBuiltinCrouch, TnuaBuiltinDash};
 use bevy_tnua::prelude::*;
 use derive_where::derive_where;
 use embers_macros::identify;
+use item::inv::{ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt};
 use serde::{Deserialize, Serialize};
 use std::ops::Neg;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
+
+pub mod embers {
+    macro_rules! dim {
+        ($id: ident, $key: expr) => {
+            pub static $id: std::sync::LazyLock<$crate::utils::NamespacedKey> =
+                std::sync::LazyLock::new(|| $crate::utils::NamespacedKey::new_embers($key));
+        };
+    }
+    dim!(ASSEMBLY_APEX, "assembly_apex");
+    dim!(LOBBY, "lobby");
+}
+
+#[derive(Component)]
+#[require(Dimension)]
+pub struct ActiveDimension;
+
+#[derive(Component, Debug)]
+pub struct Dimension(NamespacedKey);
+
+static DEFAULT_DIMENSION_KEY: LazyLock<NamespacedKey> =
+    LazyLock::new(|| NamespacedKey::new("_", "missingno"));
+
+impl Default for Dimension {
+    fn default() -> Self {
+        warn!("An default dimension is used! This is likely an error.");
+        Self::new(DEFAULT_DIMENSION_KEY.clone())
+    }
+}
+
+impl Keyed for Dimension {
+    fn key(&self) -> &NamespacedKey {
+        &self.0
+    }
+}
+
+impl Dimension {
+    pub fn new(key: NamespacedKey) -> Self {
+        Self(key)
+    }
+}
+
+#[derive(Debug, Event)]
+pub struct DimensionGenerationRequest(NamespacedKey);
+
+impl DimensionGenerationRequest {
+    pub fn new(key: &impl Keyed) -> Self {
+        Self(key.key().clone())
+    }
+}
+
+fn handle_dimension_generation_request(
+    request: On<DimensionGenerationRequest>,
+    mut commands: Commands,
+) {
+    let DimensionGenerationRequest(key) = &*request;
+    commands.spawn(Dimension::new(key.clone()));
+}
 
 #[derive(Deserialize, Serialize, Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Direction {
@@ -240,15 +296,6 @@ pub enum Movements {
     Roll(TnuaBuiltinDash),
 }
 
-#[derive(Bundle, Clone, Debug)]
-pub struct Particles(ParticleEffect, EffectMaterial);
-
-impl Particles {
-    pub fn new(effect: ParticleEffect, material: EffectMaterial) -> Self {
-        Self(effect, material)
-    }
-}
-
 pub trait Action: Keyed + Clone {
     type Environment: SystemParam;
     fn on_begin<'world, 'state>(
@@ -349,19 +396,19 @@ pub struct ActionInterruptionEvent {
 
 fn update_action<
     A: Action<Environment = Env> + Send + Sync + 'static,
-    K: 'static,
-    ASC: ActionStatusComponent<Key = K>,
-    AC: ActionsComponent<A, Key = K>,
-    F: QueryFilter,
+    Key: 'static,
+    StatusComponent: ActionStatusComponent<Key = Key>,
+    Component: ActionsComponent<A, Key = Key>,
+    Filter: QueryFilter,
     Env: SystemParam + 'static,
 >(
     (In(agent_entity), In(actions_key), In(mut trigger), In(object)): (
         In<Entity>,
-        In<K>,
+        In<Key>,
         In<Option<InteractionTrigger>>,
         In<Option<Entity>>,
     ),
-    mut agent: Query<(&mut ASC, &mut AC), F>,
+    mut agent: Query<(&mut StatusComponent, &mut Component), Filter>,
     mut environment: StaticSystemParam<Env>,
     action_reg: Reg<A>,
     mut interruption_events: MessageReader<ActionInterruptionEvent>,
@@ -521,6 +568,7 @@ impl Action for EntityInteraction {
 
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct Interactable {
+    /// The larger this is, the closer you need to get to interact
     pub distance_factor: f32,
     pub initial_click: Option<NamespacedKey>,
     pub initial_double_click: Option<NamespacedKey>,
@@ -545,35 +593,32 @@ impl Default for Time {
     }
 }
 
-pub struct Dimension {
-    key: NamespacedKey,
-    payloads: PayloadScope,
-}
+#[derive(Component)]
+struct DimensionalGateway;
 
-impl Keyed for Dimension {
-    fn key(&self) -> &NamespacedKey {
-        &self.key
-    }
-}
+pub static INTERACTION_LEVEL_SELECTION: LazyLock<NamespacedKey> =
+    LazyLock::new(|| NamespacedKey::new_embers("level_selection"));
 
-impl Dimension {
-    pub fn new(key: NamespacedKey) -> Self {
-        Self {
-            payloads: PayloadScope::new(format!("dim/{}/{}", key.namespace(), key.key())),
-            key,
-        }
-    }
-    pub fn payloads(&self) -> &PayloadScope {
-        &self.payloads
-    }
+pub fn dimensional_gateway(asset_server: &AssetServer) -> impl Bundle {
+    (
+        DimensionalGateway,
+        PhysicsPreset::Phantom.physics(true),
+        Visibility::Visible,
+        Mesh3d(asset_server.add(Cuboid::new(3., 1., 3.).mesh().build())),
+        MeshMaterial3d(asset_server.add(StandardMaterial {
+            base_color: Color::BLACK,
+            ..default()
+        })),
+        Interactable {
+            distance_factor: 1.,
+            initial_click: Some(INTERACTION_LEVEL_SELECTION.clone()),
+            initial_double_click: None,
+        },
+    )
 }
-
-pub static LOBBY: LazyLock<Dimension> =
-    LazyLock::new(|| Dimension::new(NamespacedKey::new_embers("lobby")));
 
 pub(super) fn plugin(app: &mut App) {
-    app.init_registry::<Particles>()
-        .add_message::<ActionInterruptionEvent>()
+    app.add_message::<ActionInterruptionEvent>()
         .init_registry::<EntityInteraction>()
         .add_systems(
             PreStartup,
@@ -597,11 +642,28 @@ pub(super) fn plugin(app: &mut App) {
                         },
                         Duration::from_millis(200),
                     ))?;
+                    entity_interactions.register_keyed(EntityInteraction::new(
+                        NamespacedKey::new_embers("level_selection"),
+                        |EntityInteractionEnvironment {
+                             commands,
+                             player: _player,
+                         },
+                         _entity| {
+                            commands.queue(|world: &mut World| {
+                                world
+                                    .resource_mut::<NextState<ActiveOverlay>>()
+                                    .set(ActiveOverlay::GatewayMenu);
+                            });
+                        },
+                        |_environment, _entity, _duration| None,
+                        Duration::from_millis(200),
+                    ))?;
                     Ok::<(), RegistryError>(())
                 })()
                 .expect("Failed to register entity interactions")
             },
         )
+        .add_observer(handle_dimension_generation_request)
         .add_plugins(actor::plugin)
         .add_plugins(block::plugin)
         .add_plugins(item::plugin)

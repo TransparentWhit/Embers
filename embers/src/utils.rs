@@ -1,7 +1,5 @@
 pub mod physics;
 
-use crate::pld::{ActivePayloadScopes, Payloads};
-use bevy::asset::uuid::Uuid;
 use bevy::prelude::*;
 use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -11,6 +9,46 @@ use std::result::Result;
 use std::str::FromStr;
 use std::sync::LazyLock;
 use thiserror::Error;
+use uuid::Uuid;
+
+// TODO unit tests
+#[macro_export]
+macro_rules! path {
+    (@build [$($result:expr),*] [] $lit:literal / $($rest:tt)*) => {
+        path!(@build [$($result,)* $lit] [] $($rest)*)
+    };
+    (@build [$($result:expr),*] [] $lit:literal) => {
+        path!(@concat $($result,)* $lit)
+    };
+    (@build [$($result:expr),*] [$($current:tt)+] / $($rest:tt)*) => {
+        path!(@build [$($result,)* path!(@finish [$($current)+])] [] $($rest)*)
+    };
+    (@build [$($result:expr),*] [] / $($rest:tt)*) => {
+        path!(@build [$($result),*] [] $($rest)*)
+    };
+    (@build [$($result:expr),*] [$($current:tt)*] $next:tt $($rest:tt)*) => {
+        path!(@build [$($result),*] [$($current)* $next] $($rest)*)
+    };
+    (@build [$($result:expr),*] [$($current:tt)+]) => {
+        path!(@concat $($result,)* path!(@finish [$($current)+]))
+    };
+    (@build [$($result:expr),*] []) => {
+        path!(@concat $($result),*)
+    };
+    (@finish []) => { "" };
+    (@finish [$($tokens:tt)+]) => { stringify!($($tokens)+) };
+    (@concat) => { "" };
+    (@concat $single:expr) => { $single };
+    (@concat $first:expr, $($rest:expr),+) => {
+        cfg_select! {
+            unix => concat!($first, "/" , path!(@concat $($rest),+)),
+            windows => concat!($first, "\\" , path!(@concat $($rest),+)),
+        }
+    };
+    ($($tokens:tt)*) => {
+        path!(@build [] [] $($tokens)*)
+    };
+}
 
 pub trait Marker: Clone + Send + Sync + 'static {}
 
@@ -45,6 +83,12 @@ pub trait Keyed {
 impl<T: Keyed + ?Sized> Keyed for Box<T> {
     fn key(&self) -> &NamespacedKey {
         self.as_ref().key()
+    }
+}
+
+impl Keyed for NamespacedKey {
+    fn key(&self) -> &NamespacedKey {
+        self
     }
 }
 
@@ -193,6 +237,9 @@ impl NamespacedKey {
     pub fn key(&self) -> &str {
         &self.namespaced_key[(self.separator_index + Self::SEPARATOR_LEN)..]
     }
+    pub fn path_string(&self) -> String {
+        format!("{}/{}", self.namespace(), self.key())
+    }
 }
 
 impl Namespaced for NamespacedKey {
@@ -273,19 +320,15 @@ impl TextureAtlasManifest {
     }
     pub fn manifest<'img>(
         &self,
-        asset_server: &AssetServer,
-        active_payload_scopes: &ActivePayloadScopes,
         images: &'img Assets<Image>,
     ) -> Result<TextureAtlasBuilder<'img>, TextureAtlasManifestError> {
         let mut builder = TextureAtlasBuilder::default();
         for (image_id, image) in self.textures_to_place.iter() {
             builder.add_texture(
                 image_id.clone(),
-                images
-                    .get_pld(asset_server, active_payload_scopes, image)
-                    .ok_or_else(|| {
-                        TextureAtlasManifestError::InvalidTextureHandle(image.clone())
-                    })?,
+                images.get(image).ok_or_else(|| {
+                    TextureAtlasManifestError::InvalidTextureHandle(image.clone())
+                })?,
             );
         }
         Ok(builder)

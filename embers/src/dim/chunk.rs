@@ -1,4 +1,4 @@
-use crate::dim::block::{Block, BlockCollider, BlockModel, BlockVoxelModel};
+use super::block::{Block, BlockCollider, BlockModel, BlockVoxelModel};
 use crate::reg::{Registry, ValueIndex};
 use crate::utils::Keyed;
 use avian3d::prelude::*;
@@ -9,7 +9,7 @@ use bevy::prelude::*;
 #[derive(Component)]
 #[component(on_insert = chunk_insertion_hook, on_remove = chunk_removal_hook)]
 pub struct Chunk {
-    blocks: [Block; Self::SIZE.pow(3) as usize],
+    blocks: [Block; Chunk::SIZE.pow(3) as usize],
 }
 
 fn chunk_insertion_hook(mut world: DeferredWorld, context: HookContext) {

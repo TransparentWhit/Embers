@@ -1,8 +1,13 @@
 [package]
+build = "build.rs"
 name = "embers"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+
+[package.metadata.winresource]
+InternalName = "embers"
+OriginalFilename = "embers.exe"
 
 [features]
 dev = [
@@ -14,20 +19,22 @@ dev = [
     "bevy/file_watcher",
 ]
 
+[build-dependencies]
+winresource.workspace = true
+
 [dependencies]
 embers-macros = { path = "../embers-macros" }
 avian3d.workspace = true
 bevy.workspace = true
-bevy_hanabi.workspace = true
+bevy_sprinkles.workspace = true
 bevy-tnua.workspace = true
 bevy-tnua-avian3d.workspace = true
 bevy_voxel_world.workspace = true
+winit.workspace = true
 atomicow.workspace = true
 anyhow.workspace = true
 delegate.workspace = true
 derive-where.workspace = true
-image.workspace = true
-winit.workspace = true
 duplicate.workspace = true
 regex.workspace = true
 serde.workspace = true

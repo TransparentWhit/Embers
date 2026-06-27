@@ -7,38 +7,33 @@ pub mod reg;
 mod ui;
 pub mod utils;
 
-use crate::dim::Movements;
-use crate::pld::{DelegatingAssetReader, PAYLOADS_SOURCE};
 use avian3d::PhysicsPlugins;
 use avian3d::prelude::PhysicsSchedule;
 use bevy::DefaultPlugins;
 use bevy::asset::UnapprovedPathMode;
-use bevy::asset::io::file::FileAssetReader;
-use bevy::asset::io::{AssetSourceBuilder, AssetSourceId};
 use bevy::image::ImageSamplerDescriptor;
-use bevy::log::{Level, LogPlugin};
+use bevy::input_focus::InputDispatchPlugin;
+use bevy::input_focus::tab_navigation::TabNavigationPlugin;
+use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use bevy::window::WindowTheme;
-use bevy_hanabi::HanabiPlugin;
+use bevy_sprinkles::prelude::*;
 use bevy_tnua::prelude::TnuaControllerPlugin;
 use bevy_tnua_avian3d::TnuaAvian3dPlugin;
+use dim::{Movements, SourceExclusionCollisionHooks};
 use std::env::current_exe;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use ui::loading_screen::{Load, MainMenuEntryContext};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[derive(Debug, Resource)]
+struct Options {}
 
 pub static UNPROCESSED_ASSETS_ROOT: OnceLock<PathBuf> = OnceLock::new();
 
 pub static ASSETS_ROOT: OnceLock<PathBuf> = OnceLock::new();
-
-#[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
-enum GameState {
-    Dimension,
-    #[default]
-    Loading,
-    MainMenu,
-}
 
 // TODO: The initial loading logic is a bit messy. Someone refactor it later
 // asset.rs initiates global asset loading at StartUp,
@@ -46,10 +41,7 @@ enum GameState {
 // then somehow correctly switches to main screen because GameState and Loading happen to be in the correct default states
 fn main() {
     let mut app = App::new();
-    app.add_plugins(LogPlugin {
-        level: Level::INFO,
-        ..default()
-    });
+    app.add_plugins(LogPlugin { ..default() });
     let mut current_path = current_exe().unwrap();
     while let Ok(destination) = current_path.read_link() {
         current_path = destination;
@@ -85,15 +77,7 @@ fn main() {
                 }),
         )
         .unwrap();
-    app.register_asset_source(
-        AssetSourceId::Name(PAYLOADS_SOURCE.clone()),
-        AssetSourceBuilder::new(|| {
-            Box::new(DelegatingAssetReader::new(FileAssetReader::new(
-                ASSETS_ROOT.get().unwrap().clone(),
-            )))
-        }),
-    )
-    .add_plugins(
+    app.add_plugins(
         DefaultPlugins
             .build()
             .set(AssetPlugin {
@@ -122,16 +106,15 @@ fn main() {
                 ..default()
             }),
     )
-    .add_plugins(HanabiPlugin)
-    .add_plugins(
-        PhysicsPlugins::default().with_collision_hooks::<dim::SourceExclusionCollisionHooks>(),
-    )
+    .add_plugins(InputDispatchPlugin)
+    .add_plugins(PhysicsPlugins::default().with_collision_hooks::<SourceExclusionCollisionHooks>())
+    .add_plugins(SprinklesPlugin)
+    .add_plugins(TabNavigationPlugin)
     .add_plugins(TnuaControllerPlugin::<Movements>::new(PhysicsSchedule))
     .add_plugins(TnuaAvian3dPlugin::new(PhysicsSchedule))
-    .add_plugins(dim::plugin)
-    .add_plugins(input::plugin)
-    .add_plugins(pld::plugin)
-    .add_plugins(ui::plugin)
-    .init_state::<GameState>()
+    .add_plugins((dim::plugin, input::plugin, pld::plugin, ui::plugin))
+    .add_systems(Startup, |mut commands: Commands| {
+        commands.trigger(Load::EnterMainMenu(MainMenuEntryContext::Init))
+    })
     .run();
 }

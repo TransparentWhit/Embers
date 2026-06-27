@@ -1,9 +1,10 @@
 pub mod inv;
 
-use crate::dim::actor::living::player::Player;
-use crate::dim::actor::primed_tnt::primed_tnt;
-use crate::dim::{Action, Actions, CollisionLayer, exclude_source};
+use super::actor::living::player::Player;
+use super::actor::primed_tnt::primed_tnt;
+use super::{Action, Actions, CollisionLayer, exclude_source};
 use crate::input::InteractionTrigger;
+use crate::pld::PayloadManager;
 use crate::reg::{RegBoxedMut, Registry, RegistryBoxed, RegistryError, RegistryInitExt};
 use crate::utils::physics::section;
 use crate::utils::{Keyed, NamespacedKey, UntypedCmp, UntypedPartialCmp};
@@ -55,8 +56,8 @@ impl Keyed for ItemStack {
 }
 
 impl ItemStack {
-    pub fn new(name: NamespacedKey) -> Self {
-        Self(name)
+    pub fn new(key: NamespacedKey) -> Self {
+        Self(key)
     }
 }
 
@@ -407,12 +408,15 @@ pub(super) fn plugin(app: &mut App) {
                                         player,
                                     }, _item| {
                                         let (player, transform) = **player;
-                                        commands.spawn((
-                                            primed_tnt(asset_server),
-                                            exclude_source(player),
-                                            *transform,
-                                            LinearVelocity(transform.rotation * -Vec3::Z * velocity),
-                                        ));
+                                        let transform = transform.clone();
+                                        commands.queue(move |world: &mut World| {
+                                            world.spawn((
+                                                primed_tnt(world.resource::<PayloadManager>(), world.resource::<AssetServer>(), world.resource::<Assets<Scene>>()),
+                                                exclude_source(player),
+                                                transform.clone(),
+                                                LinearVelocity(transform.rotation * -Vec3::Z * velocity),
+                                            ));
+                                        }) // TODO use bsn after Bevy 0.19
                                     },
                                     move |_environment, _item, _duration| next_action.clone(),
                                     ItemActionWield::Hands(action.wield),

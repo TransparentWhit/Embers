@@ -1,0 +1,12 @@
+(
+    meta_format_version: "1.0",
+    processed_info: Some((
+        hash: (80, 38, 188, 15, 199, 227, 155, 106, 102, 138, 67, 241, 55, 247, 120, 162, 77, 110, 87, 48, 118, 87, 253, 181, 196, 38, 2, 238, 121, 199, 147, 179),
+        full_hash: (80, 38, 188, 15, 199, 227, 155, 106, 102, 138, 67, 241, 55, 247, 120, 162, 77, 110, 87, 48, 118, 87, 253, 181, 196, 38, 2, 238, 121, 199, 147, 179),
+        process_dependencies: [],
+    )),
+    asset: Load(
+        loader: "embers::pld::meta::RawMetadataLoader<embers::ui::TextureAnimation>",
+        settings: (),
+    ),
+)

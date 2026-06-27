@@ -1,13 +1,13 @@
-use crate::dim::actor::ACTOR_NAMESPACE;
+use super::{PayloadManager, PayloadScope, block_texture};
+use crate::dim::MovementsConfig;
+use crate::dim::actor::MOVEMENT_CONFIG_NAMESPACE;
 use crate::dim::actor::living::AttributeBase;
 use crate::dim::block::{
     BlockCollider, BlockColliderTemplate, BlockModel, BlockVoxelModelTemplate,
 };
 use crate::dim::item::{ItemAction, ItemActionTemplate, ItemComponent};
-use crate::dim::{Movements, MovementsConfig, Particles};
-use crate::pld::{ActivePayloadScopes, PayloadScope};
 use crate::reg::{RegBoxed, RegMut, RegistryBoxed};
-use crate::ui::TextureAtlasAnimation;
+use crate::ui::{TextureAnimation, TextureScaling};
 use crate::utils::{NamespacedKey, TextureAtlasManifest, path_to_unix_components};
 use anyhow::Error;
 use bevy::asset::io::Reader;
@@ -182,10 +182,8 @@ impl<M: Asset + for<'de> Deserialize<'de>> AssetLoader for RawMetadataLoader<M> 
     }
 }
 
-#[derive(Event, Debug)]
-pub struct ReloadMetadata {
-    pub scope: &'static PayloadScope,
-}
+#[derive(Event)]
+pub struct ReloadMetadataRequest;
 
 fn reload_metadata_plugin(app: &mut App) {
     fn process_meta<D: SystemInput + 'static, M: Asset, P: SystemParam + 'static>(
@@ -223,7 +221,8 @@ fn reload_metadata_plugin(app: &mut App) {
         )
     }
     app.add_observer(
-        (|_on_reload_metadata: On<ReloadMetadata>, mut attribute_bases: RegMut<AttributeBase>| {
+        (|_on_reload_metadata: On<ReloadMetadataRequest>,
+          mut attribute_bases: RegMut<AttributeBase>| {
             attribute_bases.clear();
             StaticSystemInput(())
         })
@@ -237,7 +236,7 @@ fn reload_metadata_plugin(app: &mut App) {
             |key, base, (movements, attribute_bases), ()| {
                 movements
                     .insert(
-                        Uuid::new_v5(&ACTOR_NAMESPACE, key.to_string().as_bytes()),
+                        Uuid::new_v5(&MOVEMENT_CONFIG_NAMESPACE, key.to_string().as_bytes()),
                         MovementsConfig {
                             basis: TnuaBuiltinWalkConfig {
                                 float_height: base.float_height,
@@ -255,19 +254,23 @@ fn reload_metadata_plugin(app: &mut App) {
         )),
     )
     .add_observer(
-        (|on_reload_metadata: On<ReloadMetadata>,
+        (|_on_reload_metadata: On<ReloadMetadataRequest>,
           mut block_colliders: RegMut<BlockCollider>,
           mut block_models: RegMut<BlockModel>| {
             block_colliders.clear();
             block_models.clear();
-            StaticSystemInput((on_reload_metadata.scope, default()))
+            StaticSystemInput(default())
         })
         .pipe(process_meta::<
-            (InRef<PayloadScope>, In<TextureAtlasManifest>),
+            In<TextureAtlasManifest>,
             BlockMeta,
             (
+                Res<PayloadManager>,
                 Res<AssetServer>,
                 Res<Assets<Image>>,
+                Res<Assets<TextureAtlasLayout>>,
+                Res<Assets<TextureAnimation>>,
+                Res<Assets<TextureScaling>>,
                 RegMut<BlockCollider>,
                 RegBoxed<dyn BlockColliderTemplate>,
                 RegMut<BlockModel>,
@@ -279,14 +282,18 @@ fn reload_metadata_plugin(app: &mut App) {
             |key,
              block,
              (
+                payload_manager,
                 asset_server,
                 images,
+                texture_atlas_alyouts,
+                texture_animations,
+                texture_scalings,
                 block_colliders,
                 block_collider_templates,
                 block_models,
                 block_voxel_model_templates,
             ),
-             (payload_scope, block_atlas_manifest)| {
+             block_atlas_manifest| {
                 match block_collider_templates.get(&block.collider.template) {
                     Some(block_collider_template) => {
                         block_colliders
@@ -303,21 +310,15 @@ fn reload_metadata_plugin(app: &mut App) {
                         block.collider.template
                     ),
                 }
-                let (image, layout, animation) = payload_scope.block_texture(asset_server, &key);
+                /*let (image, atlas, animation, scaling) = block_texture(&payload_manager, &asset_server, &key);
                 // TODO animations
-                block_atlas_manifest.add_texture(Some(image.id()), image);
+                block_atlas_manifest.add_texture(Some(image.id()), image);*/
             },
         ))
         .pipe(
-            |In((_payload_scope, block_atlas_manifest)): In<(
-                &PayloadScope,
-                TextureAtlasManifest,
-            )>,
-             asset_server: Res<AssetServer>,
-             active_payload_scopes: Res<ActivePayloadScopes>,
-             images: Res<Assets<Image>>| {
+            |In(block_atlas_manifest): In<TextureAtlasManifest>, images: Res<Assets<Image>>| {
                 block_atlas_manifest
-                    .manifest(&asset_server, &active_payload_scopes, &images)
+                    .manifest(&images)
                     .unwrap()
                     .build()
                     .unwrap();
@@ -325,7 +326,7 @@ fn reload_metadata_plugin(app: &mut App) {
         ),
     )
     .add_observer(
-        (|_on_reload_metadata: On<ReloadMetadata>, mut item_actions: RegMut<ItemAction>| {
+        (|_on_reload_metadata: On<ReloadMetadataRequest>, mut item_actions: RegMut<ItemAction>| {
             item_actions.clear();
             StaticSystemInput(())
         })
@@ -353,7 +354,7 @@ fn reload_metadata_plugin(app: &mut App) {
         )),
     )
     .add_observer(
-        (|_on_reload_metadata: On<ReloadMetadata>| StaticSystemInput(Vec::new()))
+        (|_on_reload_metadata: On<ReloadMetadataRequest>| StaticSystemInput(Vec::new()))
             .pipe(process_meta::<In<Vec<_>>, ItemPrototype, ()>(
                 &ITEM_PROTOTYPE_PATTERN,
                 "item prototype",
@@ -401,44 +402,6 @@ fn reload_metadata_plugin(app: &mut App) {
                     }
                 }
             }),
-    )
-    .add_observer(
-        (|_on_reload_metadata: On<ReloadMetadata>, mut particles: RegMut<Particles>| {
-            particles.clear();
-            StaticSystemInput(())
-        })
-        .pipe(process_meta::<(), ParticleMeta, RegMut<Particles>>(
-            &PARTICLE_PATTERN,
-            "particle",
-            |key, particle, particles, ()| {
-                /*let mut module = Module::default();
-                let lifetime = SetAttributeModifier::new(Attribute::LIFETIME, module.lit(3.));
-                particles
-                    .register(
-                        key.clone(),
-                        Particles::new(
-                            ParticleEffect::new(
-                                asset_server.add(
-                                    EffectAsset::new(
-                                        particle.max_particles,
-                                        SpawnerSettings::new(
-                                            particle.spawn_count.into(),
-                                            particle.spawn_duration_secs.into(),
-                                            particle.spawn_period_secs.into(),
-                                            particle.spawn_cycles,
-                                        ),
-                                        module,
-                                    )
-                                    .init(lifetime)
-                                    .with_name(key),
-                                ),
-                            ),
-                            EffectMaterial { images: vec![] },
-                        ),
-                    )
-                    .expect("Failed to register particle");*/
-            },
-        )),
     );
 }
 
@@ -447,17 +410,16 @@ pub(super) fn plugin(app: &mut App) {
         .init_asset::<BlockMeta>()
         .init_asset::<ItemActionMeta>()
         .init_asset::<ItemPrototype>()
-        .init_asset::<ParticleMeta>()
         .register_asset_loader(RawMetadataLoader::<ActorBase>::new(&["actor.toml"]))
         .register_asset_loader(RawMetadataLoader::<BlockMeta>::new(&["block.toml"]))
         .register_asset_loader(RawMetadataLoader::<ItemActionMeta>::new(&[
             "item_action.toml",
         ]))
         .register_asset_loader(RawMetadataLoader::<ItemPrototype>::new(&["item.toml"]))
-        .register_asset_loader(RawMetadataLoader::<ParticleMeta>::new(&["particle.toml"]))
         .register_asset_loader(TextureAtlasMetadataLoader)
-        .register_asset_loader(RawMetadataLoader::<TextureAtlasAnimation>::new(&[
-            "atlas_animation.toml",
+        .register_asset_loader(RawMetadataLoader::<TextureAnimation>::new(&[
+            "animation.toml",
         ]))
+        .register_asset_loader(RawMetadataLoader::<TextureScaling>::new(&["scaling.toml"]))
         .add_plugins(reload_metadata_plugin);
 }

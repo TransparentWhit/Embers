@@ -1,0 +1,10 @@
+type = "sliced"
+border_width_min = 20
+border_width_max = 20
+border_height_min = 4
+border_height_max = 4
+center_scaling.mode = "tile"
+center_scaling.stretch_value = 1
+side_scaling.mode = "tile"
+side_scaling.stretch_value = 1
+max_corner_scale = 1
