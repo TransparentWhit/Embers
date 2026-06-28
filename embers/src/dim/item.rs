@@ -411,7 +411,7 @@ pub(super) fn plugin(app: &mut App) {
                                         let transform = transform.clone();
                                         commands.queue(move |world: &mut World| {
                                             world.spawn((
-                                                primed_tnt(world.resource::<PayloadManager>(), world.resource::<AssetServer>(), world.resource::<Assets<Scene>>()),
+                                                primed_tnt(world.resource::<PayloadManager>(), world.resource::<AssetServer>(), world.resource::<Assets<Gltf>>()),
                                                 exclude_source(player),
                                                 transform.clone(),
                                                 LinearVelocity(transform.rotation * -Vec3::Z * velocity),

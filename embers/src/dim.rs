@@ -6,6 +6,7 @@ pub mod item;
 use crate::input::InteractionTrigger;
 use crate::reg::{Reg, RegMut, RegistryError, RegistryInitExt};
 use crate::ui::ActiveOverlay;
+use crate::ui::dim::DimensionRootNode;
 use crate::utils::{Keyed, NamespacedKey};
 use actor::living::player;
 use actor::living::player::{Player, PlayerInventory};
@@ -79,9 +80,10 @@ impl DimensionGenerationRequest {
 fn handle_dimension_generation_request(
     request: On<DimensionGenerationRequest>,
     mut commands: Commands,
+    dimension_root_node: Single<Entity, With<DimensionRootNode>>,
 ) {
     let DimensionGenerationRequest(key) = &*request;
-    commands.spawn(Dimension::new(key.clone()));
+    commands.spawn((ChildOf(*dimension_root_node), Dimension::new(key.clone())));
 }
 
 #[derive(Deserialize, Serialize, Copy, Clone, Debug, Eq, Hash, PartialEq)]

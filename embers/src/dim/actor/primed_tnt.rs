@@ -1,6 +1,6 @@
 use super::actor;
 use crate::dim::PhysicsPreset;
-use crate::pld::{PayloadManager, actor_scene, animate_actor};
+use crate::pld::{GltfElementId, PayloadManager, actor_scene, animate_actor};
 use crate::utils::NamespacedKey;
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -26,20 +26,20 @@ pub(super) fn fuse(
     mut query: Query<(Entity, &Transform, &mut AnimationPlayer, Mut<Fuse>)>,
     payload_manager: Res<PayloadManager>,
     asset_server: Res<AssetServer>,
-    animations: Res<Assets<AnimationClip>>,
+    models: Res<Assets<Gltf>>,
     mut particles: ResMut<Assets<ParticleSystemAsset>>,
     time: Res<Time>,
 ) {
     for (entity, transform, mut animation_player, mut fuse) in query.iter_mut() {
         if fuse.is_added() {
-            commands.entity(entity).insert(animate_actor(
+            /*commands.entity(entity).insert(animate_actor(
                 &payload_manager,
                 &mut animation_player,
                 &asset_server,
-                &animations,
+                &models,
                 &MODEL_KEY,
-                0,
-            ));
+                GltfElementId::Default,
+            ).expect("Requires animation"));*/
         }
         fuse.0.tick(time.delta());
         if fuse.0.is_finished() {
@@ -83,15 +83,18 @@ pub(super) fn fuse(
                             draw_pass: EmitterDrawPass {
                                 mesh: ParticleMesh::Quad {
                                     orientation: default(),
-                                    size: default(),
-                                    subdivide: default(),
+                                    size: Vec2::ONE,
+                                    subdivide: Vec2::ZERO,
                                 },
                                 material: DrawPassMaterial::Standard(StandardParticleMaterial {
+                                    alpha_mode: SerializableAlphaMode::Blend,
                                     base_color_texture: Some(TextureRef::Asset(
                                         "global/textures/particles/explosion_10.png".to_string(),
                                     )),
+                                    unlit: true,
                                     ..default()
                                 }),
+                                transform_align: Some(TransformAlign::Billboard),
                                 ..default()
                             },
                             accelerations: EmitterAccelerations {
@@ -115,14 +118,23 @@ pub(super) fn fuse(
 pub fn primed_tnt(
     payload_manager: &PayloadManager,
     asset_server: &AssetServer,
-    scenes: &Assets<Scene>,
+    models: &Assets<Gltf>,
 ) -> impl Bundle {
     (
         actor(),
         PhysicsPreset::MiscActor.physics(false),
         Fuse::default(),
         AnimationPlayer::default(),
-        SceneRoot(actor_scene(payload_manager, asset_server, scenes, &MODEL_KEY, 0).unwrap()),
+        SceneRoot(
+            actor_scene(
+                payload_manager,
+                asset_server,
+                models,
+                &MODEL_KEY,
+                GltfElementId::Default,
+            )
+            .unwrap(),
+        ),
         Collider::cuboid(1.0, 1.0, 1.0),
     )
 }

@@ -197,12 +197,14 @@ fn begin_loading(
         Load::EnterDimension(context, dimension_key) => {
             let load = (
                 DimensionGenerationTask(dimension_key.clone()),
-                related!(TaskDependencies[
-                    ReloadMetadataTask,
-                    related!(TaskDependencies[
-                        FetchPayloadScopeTask(PayloadScopeId::Dimension(dimension_key.clone())),
-                    ])
-                ]),
+                related!(
+                    TaskDependencies[(
+                        ReloadMetadataTask,
+                        related!(TaskDependencies[
+                            FetchPayloadScopeTask(PayloadScopeId::Dimension(dimension_key.clone())),
+                        ])
+                    )]
+                ),
             );
             match context {
                 DimensionEntryContext::EnterWorld => {

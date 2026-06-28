@@ -34,7 +34,7 @@ fn init(
     mut commands: Commands,
     payload_manager: Res<PayloadManager>,
     asset_server: Res<AssetServer>,
-    scenes: Res<Assets<Scene>>,
+    models: Res<Assets<Gltf>>,
     attribute_bases: Reg<AttributeBase>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -108,17 +108,17 @@ fn init(
                 dummy(
                     &payload_manager,
                     &asset_server,
-                    &scenes,
+                    &models,
                     attribute_bases.as_ref()
                 ),
                 Transform::from_xyz(5.0, 0.5, 0.0)
             ),
             (
-                item_actor_of(&payload_manager, &asset_server, &scenes, sword()),
+                item_actor_of(&payload_manager, &asset_server, &models, sword()),
                 Transform::from_xyz(2.0, 1.0, 0.0),
             ),
             (
-                item_actor_of(&payload_manager, &asset_server, &scenes, tnt()),
+                item_actor_of(&payload_manager, &asset_server, &models, tnt()),
                 Transform::from_xyz(2.0, 1.0, 0.0),
             ),
         ],

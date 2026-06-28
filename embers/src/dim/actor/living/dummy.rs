@@ -1,6 +1,6 @@
 use super::{AttributeBase, living_actor};
 use crate::dim::actor::MOVEMENT_CONFIG_NAMESPACE;
-use crate::pld::{PayloadManager, actor_scene};
+use crate::pld::{GltfElementId, PayloadManager, actor_scene};
 use crate::reg::Registry;
 use crate::utils::NamespacedKey;
 use avian3d::prelude::*;
@@ -18,12 +18,21 @@ static MODEL_KEY: LazyLock<NamespacedKey> = LazyLock::new(|| NamespacedKey::new_
 pub fn dummy(
     payload_manager: &PayloadManager,
     asset_server: &AssetServer,
-    scenes: &Assets<Scene>,
+    models: &Assets<Gltf>,
     attribute_bases: &Registry<AttributeBase>,
 ) -> impl Bundle {
     (
         living_actor(&KEY, &UUID, attribute_bases, false),
         Collider::cuboid(1., 3., 1.),
-        SceneRoot(actor_scene(payload_manager, asset_server, scenes, &MODEL_KEY, 0).unwrap()),
+        SceneRoot(
+            actor_scene(
+                payload_manager,
+                asset_server,
+                models,
+                &MODEL_KEY,
+                GltfElementId::Default,
+            )
+            .unwrap(),
+        ),
     )
 }

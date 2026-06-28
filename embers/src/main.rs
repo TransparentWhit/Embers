@@ -35,10 +35,6 @@ pub static UNPROCESSED_ASSETS_ROOT: OnceLock<PathBuf> = OnceLock::new();
 
 pub static ASSETS_ROOT: OnceLock<PathBuf> = OnceLock::new();
 
-// TODO: The initial loading logic is a bit messy. Someone refactor it later
-// asset.rs initiates global asset loading at StartUp,
-// when it completes it sends a message which gets received by loading_screen.rs,
-// then somehow correctly switches to main screen because GameState and Loading happen to be in the correct default states
 fn main() {
     let mut app = App::new();
     app.add_plugins(LogPlugin { ..default() });

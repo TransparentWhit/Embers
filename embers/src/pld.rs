@@ -5,9 +5,9 @@ pub mod meta;
 
 use crate::path;
 use crate::ui::{TextureAnimation, TextureScaling};
-use crate::utils::{Namespaced, NamespacedKey};
+use crate::utils::NamespacedKey;
 use bevy::app::App;
-use bevy::asset::io::{AssetReader, AssetSourceId};
+use bevy::asset::io::AssetSourceId;
 use bevy::asset::{AssetPath, LoadState, LoadedFolder, embedded_asset};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -164,6 +164,7 @@ fn handle_fetch_scope_request(
         payload_hold
             .loading_scopes
             .insert(asset_server.load_folder(&scope.root));
+        println!("Load {}", scope.root);
         scopes.push(scope);
     }
 }
@@ -290,6 +291,14 @@ fn handle_reload_request(
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum GltfElementId<'name> {
+    #[default]
+    Default,
+    Index(usize),
+    Name(&'name str),
+}
+
 fn resolve<'path, A: Asset>(
     payload_manager: &PayloadManager,
     asset_server: &AssetServer,
@@ -297,8 +306,8 @@ fn resolve<'path, A: Asset>(
     path: impl Into<AssetPath<'path>>,
 ) -> Option<Handle<A>> {
     let path = path.into();
-    for source in &payload_manager.sources {
-        for scope in &source.0 {
+    for (scopes, _source_id) in payload_manager.sources.iter().rev() {
+        for scope in scopes.iter().rev() {
             if let Some(handle) = asset_server
                 .get_handle(scope.root.resolve(&*path.path().to_string_lossy()).unwrap())
             {
@@ -319,16 +328,16 @@ fn resolve<'path, A: Asset>(
 pub fn actor_scene(
     payload_manager: &PayloadManager,
     asset_server: &AssetServer,
-    scenes: &Assets<Scene>,
+    models: &Assets<Gltf>,
     key: &NamespacedKey,
-    label: usize,
+    id: GltfElementId,
 ) -> Option<Handle<Scene>> {
     scene(
         payload_manager,
         asset_server,
-        scenes,
-        &*format!("actors/{}/{}", key.namespace(), key.key()),
-        label,
+        models,
+        &*format!("actors/{}", key.path_string()),
+        id,
     )
 }
 #[inline]
@@ -336,17 +345,17 @@ pub fn animate_actor(
     payload_manager: &PayloadManager,
     animation_player: &mut AnimationPlayer,
     asset_server: &AssetServer,
-    animations: &Assets<AnimationClip>,
+    models: &Assets<Gltf>,
     key: &NamespacedKey,
-    label: usize,
-) -> AnimationGraphHandle {
+    id: GltfElementId,
+) -> Option<AnimationGraphHandle> {
     animate(
         payload_manager,
         animation_player,
         asset_server,
-        animations,
-        &*format!("actors/{}/{}", key.namespace(), key.key()),
-        label,
+        models,
+        &*format!("actors/{}", key.path_string()),
+        id,
     )
 }
 #[inline]
@@ -421,18 +430,18 @@ pub fn item_image_node(
     )
 }
 #[inline]
-pub fn default_model(
+pub fn default_scene(
     payload_manager: &PayloadManager,
     asset_server: &AssetServer,
-    models: &Assets<Scene>,
+    models: &Assets<Gltf>,
 ) -> Handle<Scene> {
     // TODO use embedded bsn when bsn reader comes out
-    model(
+    scene(
         payload_manager,
         asset_server,
         models,
         "missingno",
-        GltfAssetLabel::Scene(0),
+        GltfElementId::Default,
     )
     .unwrap()
 }
@@ -471,49 +480,51 @@ fn image_node<'path>(
 fn scene<'path>(
     payload_manager: &PayloadManager,
     asset_server: &AssetServer,
-    scenes: &Assets<Scene>,
+    models: &Assets<Gltf>,
     path: impl Into<&'path str>,
-    label: usize,
+    id: GltfElementId,
 ) -> Option<Handle<Scene>> {
-    model(
-        payload_manager,
-        asset_server,
-        scenes,
-        path,
-        GltfAssetLabel::Scene(label),
-    )
+    model(payload_manager, asset_server, models, path)
+        .and_then(|handle| models.get(&handle))
+        .and_then(|gltf| match id {
+            GltfElementId::Default => gltf.default_scene.as_ref(),
+            GltfElementId::Index(index) => gltf.scenes.get(index),
+            GltfElementId::Name(name) => gltf.named_scenes.get(name),
+        })
+        .cloned()
 }
 #[inline]
 fn animate<'path>(
     payload_manager: &PayloadManager,
     animation_player: &mut AnimationPlayer,
     asset_server: &AssetServer,
-    animations: &Assets<AnimationClip>,
+    models: &Assets<Gltf>,
     path: impl Into<&'path str>,
-    label: usize,
-) -> AnimationGraphHandle {
-    let (graph, index) = AnimationGraph::from_clip(
-        animation(payload_manager, asset_server, animations, path, label)
-            .expect("Requires animation"),
-    );
-    animation_player.play(index).repeat();
-    AnimationGraphHandle(asset_server.add(graph))
+    id: GltfElementId,
+) -> Option<AnimationGraphHandle> {
+    animation(payload_manager, asset_server, models, path, id)
+        .map(AnimationGraph::from_clip)
+        .map(|(graph, index)| {
+            animation_player.play(index).repeat();
+            AnimationGraphHandle(asset_server.add(graph))
+        })
 }
 #[inline]
 fn animation<'path>(
     payload_manager: &PayloadManager,
     asset_server: &AssetServer,
-    animations: &Assets<AnimationClip>,
+    models: &Assets<Gltf>,
     path: impl Into<&'path str>,
-    label: usize,
+    id: GltfElementId,
 ) -> Option<Handle<AnimationClip>> {
-    model(
-        payload_manager,
-        asset_server,
-        animations,
-        path,
-        GltfAssetLabel::Animation(label),
-    )
+    model(payload_manager, asset_server, models, path)
+        .and_then(|handle| models.get(&handle))
+        .and_then(|gltf| match id {
+            GltfElementId::Default => None,
+            GltfElementId::Index(index) => gltf.animations.get(index),
+            GltfElementId::Name(name) => gltf.named_animations.get(name),
+        })
+        .cloned()
 }
 #[inline]
 fn plain_image<'path>(
@@ -575,18 +586,17 @@ fn rich_image<'path>(
     )
 }
 #[inline]
-fn model<'path, M: Asset>(
+fn model<'path>(
     payload_manager: &PayloadManager,
     asset_server: &AssetServer,
-    models: &Assets<M>,
+    models: &Assets<Gltf>,
     path: impl Into<&'path str>,
-    label: GltfAssetLabel,
-) -> Option<Handle<M>> {
+) -> Option<Handle<Gltf>> {
     resolve(
         payload_manager,
         asset_server,
         models,
-        label.from_asset(format!("models/{}.glb", path.into())),
+        format!("models/{}.glb", path.into()),
     )
 }
 #[inline]
