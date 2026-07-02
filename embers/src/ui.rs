@@ -9,15 +9,13 @@ pub mod options_video;
 pub mod pause_screen;
 pub mod title_screen;
 
-use crate::pld::{PayloadManager, font, resolve_optional_payload, ui_image_node};
+use crate::pld::{text_font, ui_image_node};
 use crate::utils::NamespacedKey;
-use bevy::color::palettes::basic::WHITE;
-use bevy::ecs::relationship::{RelatedSpawnerCommands, Relationship};
-use bevy::ecs::system::NonSendMarker;
-use bevy::input_focus::InputFocus;
+use bevy::color::palettes::css::WHITE;
+use bevy::ecs::system::{IntoObserverSystem, NonSendMarker, ObserverSystem};
+use bevy::input_focus::{FocusGained, FocusLost, InputFocus};
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
-use bevy::text::FontSmoothing;
 use bevy::ui::InteractionDisabled;
 use bevy::window::PrimaryWindow;
 use bevy::winit::WINIT_WINDOWS;
@@ -89,7 +87,7 @@ impl<Ext: Send + Sync + 'static> NodeInteraction<Ext> {
 }
 
 #[derive(Clone, Debug, EntityEvent, PartialEq)]
-pub struct WidgetStateUpdated(Entity);
+pub struct RefreshWidgetStatus(Entity);
 
 fn trigger_default_node_interaction(
     mut commands: Commands,
@@ -105,176 +103,82 @@ fn trigger_default_node_interaction(
     >,
 ) {
     if keys.just_pressed(KeyCode::Enter)
-        && let Some(node) = focus.0
+        && let Some(node) = focus.get()
     {
         commands.trigger(NodeInteraction::new(node, ()));
         //commands.spawn((AudioPlayer::new(), PlaybackSettings::DESPAWN));
     }
     for (node, interaction) in interactions.iter() {
-        match interaction {
-            Interaction::Pressed => commands.trigger(NodeInteraction::new(node, ())),
-            _ => commands.trigger(WidgetStateUpdated(node)),
+        if matches!(interaction, Interaction::Pressed) {
+            commands.trigger(NodeInteraction::new(node, ()));
         }
     }
 }
 
 static UI_FONT: LazyLock<NamespacedKey> = LazyLock::new(|| NamespacedKey::new_embers("polygon"));
 
-fn text(
-    payload_manager: &PayloadManager,
-    asset_server: &AssetServer,
-    fonts: &Assets<Font>,
-    text: impl Into<String>,
-    color: impl Into<Color>,
-    size: f32,
-) -> impl Bundle {
-    (
-        Text::new(text),
-        TextColor(color.into()),
-        TextFont::from_font_size(size)
-            .with_font_smoothing(FontSmoothing::None)
-            .with_font(font(payload_manager, asset_server, fonts, &UI_FONT).unwrap()),
-    )
-}
-
-#[derive(Clone, Component, Copy, Debug, Default, Eq, PartialEq)]
-#[require(Hovered)]
-struct ButtonWidget;
-
-//fn button<E: EntityEvent, C: Component>(_event: On<E, C>, button: Query<, (With<ButtonWidget>)>) {}
-
-pub trait RelatedSpawnerCommandsExt<R: Relationship> {
-    fn spawn_hypertext(
-        &mut self,
-        payload_manager: &PayloadManager,
-        asset_server: &AssetServer,
-        fonts: &Assets<Font>,
-        label: impl Into<String>,
-        extra: impl Bundle,
-    ) -> EntityCommands<'_>;
-    fn spawn_text_button(
-        &mut self,
-        payload_manager: &PayloadManager,
-        asset_server: &AssetServer,
-        images: &Assets<Image>,
-        texture_atlas_layouts: &Assets<TextureAtlasLayout>,
-        texture_animations: &Assets<TextureAnimation>,
-        texture_scalings: &Assets<TextureScaling>,
-        fonts: &Assets<Font>,
-        label: impl Into<String>,
-        extra: impl Bundle,
-    ) -> EntityCommands<'_>;
-}
-
-impl<R: Relationship> RelatedSpawnerCommandsExt<R> for RelatedSpawnerCommands<'_, R> {
-    fn spawn_hypertext(
-        &mut self,
-        payload_manager: &PayloadManager,
-        asset_server: &AssetServer,
-        fonts: &Assets<Font>,
-        label: impl Into<String>,
-        extra: impl Bundle,
-    ) -> EntityCommands<'_> {
-        self.spawn((
-            Button,
-            Node {
-                width: px(200),
-                height: px(20),
-                margin: UiRect::all(px(2)),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            text(payload_manager, asset_server, fonts, label, WHITE, 14.),
-            Hovered::default(),
-            extra,
-        ))
-    }
-    fn spawn_text_button(
-        &mut self,
-        payload_manager: &PayloadManager,
-        asset_server: &AssetServer,
-        images: &Assets<Image>,
-        texture_atlas_layouts: &Assets<TextureAtlasLayout>,
-        texture_animations: &Assets<TextureAnimation>,
-        texture_scalings: &Assets<TextureScaling>,
-        fonts: &Assets<Font>,
-        label: impl Into<String>,
-        extra: impl Bundle,
-    ) -> EntityCommands<'_> {
-        let mut commands = self.spawn((
-            Button,
-            Node {
-                width: px(200),
-                height: px(20),
-                margin: UiRect::all(px(2)),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            ui_image_node(
-                payload_manager,
-                asset_server,
-                images,
-                texture_atlas_layouts,
-                texture_animations,
-                texture_scalings,
-                "widgets/button",
-            ),
-            Hovered::default(),
-            children![text(
-                payload_manager,
-                asset_server,
-                fonts,
-                label,
-                WHITE,
-                14.
-            )],
-            extra,
-        ));
-        commands.observe(|on_: On<Insert, Hovered>| {});
-        commands
+fn text(text: impl Into<String>, color: impl Into<Color>, size: impl Into<FontSize>) -> impl Scene {
+    bsn! {
+        Text(text)
+        TextColor(color)
+        text_font(&*UI_FONT, size)
+        TextLayout
     }
 }
 
-fn text_button_node(
-    payload_manager: &PayloadManager,
-    asset_server: &AssetServer,
-    images: &Assets<Image>,
-    texture_atlas_layouts: &Assets<TextureAtlasLayout>,
-    texture_animations: &Assets<TextureAnimation>,
-    texture_scalings: &Assets<TextureScaling>,
-    fonts: &Assets<Font>,
+fn text_button<M: 'static>(
     label: impl Into<String>,
-) -> impl Bundle {
-    (
-        Button,
+    action: impl IntoObserverSystem<NodeInteraction, (), M> + Clone + Sync,
+) -> impl Scene {
+    fn update_image_node<E: EntityEvent, B: Bundle>() -> impl ObserverSystem<E, B> + Clone {
+        IntoSystem::into_system(
+            |event: On<E, B>,
+             mut commands: Commands,
+             focus: Res<InputFocus>,
+             status: Query<(&Hovered, Has<InteractionDisabled>), With<Button>>| {
+                let entity = event.event_target();
+                commands.entity(entity).apply_scene(ui_image_node(
+                    match {
+                        let (Hovered(hovered), disabled) = status
+                            .get(entity)
+                            .expect("Status of the button should be available");
+                        (
+                            *hovered
+                                || focus
+                                    .get()
+                                    .is_some_and(|focus_entity| focus_entity == entity),
+                            disabled,
+                        )
+                    } {
+                        (false, false) => "widgets/button",
+                        (true, false) => "widgets/button_highlighted",
+                        (_highlighted, true) => "widgets/button_disabled",
+                    },
+                ));
+            },
+        )
+    }
+    bsn! {
+        Button
         Node {
             width: px(200),
             height: px(20),
-            margin: UiRect::all(px(2)),
+            margin: px(2),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
-            ..default()
-        },
-        ui_image_node(
-            payload_manager,
-            asset_server,
-            images,
-            texture_atlas_layouts,
-            texture_animations,
-            texture_scalings,
-            "widgets/button",
-        ),
-        children![text(
-            payload_manager,
-            asset_server,
-            fonts,
-            label,
-            WHITE,
-            14.
-        )],
-    )
+        }
+        ui_image_node("widgets/button")
+        Hovered
+        on(update_image_node::<Insert, Hovered>())
+        on(update_image_node::<FocusGained, ()>())
+        on(update_image_node::<FocusLost, ()>())
+        on(update_image_node::<Add, InteractionDisabled>())
+        on(update_image_node::<Remove, InteractionDisabled>())
+        on(action)
+        Children [
+            (text(label, WHITE, 14.)),
+        ]
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -350,40 +254,35 @@ impl From<&TextureScaling> for NodeImageMode {
     }
 }
 
-#[derive(Asset, Debug, Deserialize, TypePath)]
+#[derive(Asset, Debug, Deserialize, TypePath, Clone, PartialEq)]
 pub struct TextureAnimation {
     atlas_begin_index: usize,
     atlas_end_index: usize,
     frame_time_secs: f32,
 }
 
-#[derive(Clone, Component, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Component, Debug, PartialEq)]
 pub struct AnimatedTexture {
-    animation: Handle<TextureAnimation>,
-    timer: Option<Timer>,
+    animation: TextureAnimation,
+    timer: Timer,
 }
 
 impl AnimatedTexture {
-    pub fn new(animation: Handle<TextureAnimation>) -> Self {
+    pub fn new(animation: TextureAnimation) -> Self {
         Self {
+            timer: Timer::from_seconds(animation.frame_time_secs, TimerMode::Repeating),
             animation,
-            timer: None,
         }
     }
 }
 
-fn run_animations(
-    time: Res<Time>,
-    atlas_animations: Res<Assets<TextureAnimation>>,
-    mut animated: Query<(&mut ImageNode, &mut AnimatedTexture)>,
-) {
-    for (mut image_node, mut animated_image_node) in animated.iter_mut() {
-        if let Some(animation) = atlas_animations.get(&animated_image_node.animation)
-            && let Some(atlas) = &mut image_node.texture_atlas
-        {
-            let timer = animated_image_node.timer.get_or_insert_with(|| {
-                Timer::from_seconds(animation.frame_time_secs, TimerMode::Repeating)
-            });
+fn run_animations(time: Res<Time>, mut animated: Query<(&mut ImageNode, &mut AnimatedTexture)>) {
+    for (mut image_node, mut animated_texture) in animated.iter_mut() {
+        let &mut AnimatedTexture {
+            ref animation,
+            ref mut timer,
+        } = &mut *animated_texture;
+        if let Some(atlas) = &mut image_node.texture_atlas {
             timer.tick(time.delta());
             if timer.just_finished() {
                 atlas.index = atlas.index.wrapping_add(1);
@@ -437,17 +336,6 @@ pub(super) fn plugin(app: &mut App) {
         .insert_resource(UiScale(3.))
         .add_systems(PreUpdate, process_escaping)
         .add_systems(Update, trigger_default_node_interaction)
-        .add_systems(
-            Update,
-            (resolve_optional_payload::<TextureAnimation>(
-                |commands, handle, _animation| {
-                    commands.insert(AnimatedTexture::new(handle));
-                },
-                |commands| {
-                    commands.remove::<AnimatedTexture>();
-                },
-            ),),
-        ) // TODO use bsn after Bevy 0.19
         .add_systems(Update, run_animations)
         .add_systems(Update, set_window_icons)
         .add_systems(

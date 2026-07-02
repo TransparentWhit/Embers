@@ -4,12 +4,15 @@ mod chunk;
 pub mod item;
 
 use crate::input::InteractionTrigger;
+use crate::pld::PayloadManager;
 use crate::reg::{Reg, RegMut, RegistryError, RegistryInitExt};
-use crate::ui::ActiveOverlay;
-use crate::ui::dim::DimensionRootNode;
+use crate::ui::{ActiveOverlay, RootNode};
 use crate::utils::{Keyed, NamespacedKey};
+use actor::item_actor::item_actor_of;
+use actor::living::AttributeBase;
+use actor::living::dummy::dummy;
 use actor::living::player;
-use actor::living::player::{Player, PlayerInventory};
+use actor::living::player::{Player, PlayerInventory, player};
 use avian3d::prelude::*;
 use avian3d::schedule::LastPhysicsTick;
 use bevy::ecs::change_detection::Tick;
@@ -23,6 +26,7 @@ use bevy_tnua::prelude::*;
 use derive_where::derive_where;
 use embers_macros::identify;
 use item::inv::{ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt};
+use item::{sword, tnt};
 use serde::{Deserialize, Serialize};
 use std::ops::Neg;
 use std::sync::{Arc, LazyLock};
@@ -77,13 +81,66 @@ impl DimensionGenerationRequest {
     }
 }
 
+#[derive(Component)]
+struct Ground;
+
 fn handle_dimension_generation_request(
     request: On<DimensionGenerationRequest>,
     mut commands: Commands,
-    dimension_root_node: Single<Entity, With<DimensionRootNode>>,
+    root_node: Single<Entity, With<RootNode>>,
+    payload_manager: Res<PayloadManager>,
+    asset_server: Res<AssetServer>,
+    models: Res<Assets<Gltf>>,
+    attribute_bases: Reg<AttributeBase>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let DimensionGenerationRequest(key) = &*request;
-    commands.spawn((ChildOf(*dimension_root_node), Dimension::new(key.clone())));
+    commands.spawn((
+        ChildOf(*root_node),
+        Dimension::new(key.clone()),
+        children![
+            (
+                DirectionalLight::default(),
+                Transform::from_translation(Vec3::ONE).looking_at(Vec3::ZERO, Vec3::Y),
+            ),
+            (
+                Mesh3d(meshes.add(Plane3d::default().mesh().size(20., 20.))),
+                MeshMaterial3d(materials.add(Color::WHITE)),
+                PhysicsPreset::Environment.physics(false),
+                Ground,
+                Collider::heightfield(vec![vec![0.0, 0.0], vec![0.0, 0.0]], Vec3::splat(20.)),
+            ),
+            (gateway(&asset_server),),
+            (
+                Mesh3d(
+                    meshes.add(
+                        Cylinder {
+                            radius: 0.5,
+                            half_height: 0.85,
+                        }
+                        .mesh(),
+                    ),
+                ),
+                MeshMaterial3d(materials.add(Color::srgb(0.3, 0.5, 0.3))),
+                player(attribute_bases.as_ref()),
+                Transform::from_xyz(0.0, 1.0, 0.0),
+                LinearVelocity::from(Vec3::new(0., 10., 0.)),
+            ),
+            (
+                dummy(attribute_bases.as_ref()),
+                Transform::from_xyz(5.0, 0.5, 0.0)
+            ),
+            (
+                item_actor_of(&payload_manager, &asset_server, &models, sword()),
+                Transform::from_xyz(2.0, 1.0, 0.0),
+            ),
+            (
+                item_actor_of(&payload_manager, &asset_server, &models, tnt()),
+                Transform::from_xyz(2.0, 1.0, 0.0),
+            ),
+        ],
+    ));
 }
 
 #[derive(Deserialize, Serialize, Copy, Clone, Debug, Eq, Hash, PartialEq)]
@@ -596,14 +653,14 @@ impl Default for Time {
 }
 
 #[derive(Component)]
-struct DimensionalGateway;
+struct Gateway;
 
 pub static INTERACTION_LEVEL_SELECTION: LazyLock<NamespacedKey> =
     LazyLock::new(|| NamespacedKey::new_embers("level_selection"));
 
-pub fn dimensional_gateway(asset_server: &AssetServer) -> impl Bundle {
+pub fn gateway(asset_server: &AssetServer) -> impl Bundle {
     (
-        DimensionalGateway,
+        Gateway,
         PhysicsPreset::Phantom.physics(true),
         Visibility::Visible,
         Mesh3d(asset_server.add(Cuboid::new(3., 1., 3.).mesh().build())),

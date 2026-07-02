@@ -4,7 +4,7 @@ pub mod dim;
 pub mod input;
 pub mod pld;
 pub mod reg;
-mod ui;
+pub mod ui;
 pub mod utils;
 
 use avian3d::PhysicsPlugins;
@@ -12,7 +12,6 @@ use avian3d::prelude::PhysicsSchedule;
 use bevy::DefaultPlugins;
 use bevy::asset::UnapprovedPathMode;
 use bevy::image::ImageSamplerDescriptor;
-use bevy::input_focus::InputDispatchPlugin;
 use bevy::input_focus::tab_navigation::TabNavigationPlugin;
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
@@ -102,7 +101,6 @@ fn main() {
                 ..default()
             }),
     )
-    .add_plugins(InputDispatchPlugin)
     .add_plugins(PhysicsPlugins::default().with_collision_hooks::<SourceExclusionCollisionHooks>())
     .add_plugins(SprinklesPlugin)
     .add_plugins(TabNavigationPlugin)

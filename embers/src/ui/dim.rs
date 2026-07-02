@@ -1,13 +1,5 @@
 use super::{GameState, RootNode};
-use crate::dim::actor::item_actor::item_actor_of;
-use crate::dim::actor::living::AttributeBase;
-use crate::dim::actor::living::dummy::dummy;
-use crate::dim::actor::living::player::{Player, player};
-use crate::dim::item::{sword, tnt};
-use crate::dim::{PhysicsPreset, dimensional_gateway};
-use crate::pld::PayloadManager;
-use crate::reg::Reg;
-use avian3d::prelude::*;
+use crate::dim::actor::living::player::Player;
 use bevy::camera::{ScalingMode, Viewport};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
@@ -16,9 +8,6 @@ use std::ops::DerefMut;
 
 #[derive(Component)]
 pub struct DimensionRootNode;
-
-#[derive(Component)]
-struct Ground;
 
 #[derive(Component, Debug)]
 pub enum PlayerCamera {
@@ -30,15 +19,7 @@ pub enum PlayerCamera {
     },
 }
 
-fn init(
-    mut commands: Commands,
-    payload_manager: Res<PayloadManager>,
-    asset_server: Res<AssetServer>,
-    models: Res<Assets<Gltf>>,
-    attribute_bases: Reg<AttributeBase>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
+fn init(mut commands: Commands) {
     commands.spawn((
         RootNode,
         DespawnOnExit(GameState::Dimension),
@@ -76,50 +57,6 @@ fn init(
                     height: 8.,
                     angle: 35f32.to_radians(),
                 },
-            ),
-            (
-                DirectionalLight::default(),
-                Transform::from_translation(Vec3::ONE).looking_at(Vec3::ZERO, Vec3::Y),
-            ),
-            (
-                Mesh3d(meshes.add(Plane3d::default().mesh().size(20., 20.))),
-                MeshMaterial3d(materials.add(Color::WHITE)),
-                PhysicsPreset::Environment.physics(false),
-                Ground,
-                Collider::heightfield(vec![vec![0.0, 0.0], vec![0.0, 0.0]], Vec3::splat(20.)),
-            ),
-            (dimensional_gateway(&asset_server),),
-            (
-                Mesh3d(
-                    meshes.add(
-                        Cylinder {
-                            radius: 0.5,
-                            half_height: 0.85,
-                        }
-                        .mesh(),
-                    ),
-                ),
-                MeshMaterial3d(materials.add(Color::srgb(0.3, 0.5, 0.3))),
-                player(attribute_bases.as_ref()),
-                Transform::from_xyz(0.0, 1.0, 0.0),
-                LinearVelocity::from(Vec3::new(0., 10., 0.)),
-            ),
-            (
-                dummy(
-                    &payload_manager,
-                    &asset_server,
-                    &models,
-                    attribute_bases.as_ref()
-                ),
-                Transform::from_xyz(5.0, 0.5, 0.0)
-            ),
-            (
-                item_actor_of(&payload_manager, &asset_server, &models, sword()),
-                Transform::from_xyz(2.0, 1.0, 0.0),
-            ),
-            (
-                item_actor_of(&payload_manager, &asset_server, &models, tnt()),
-                Transform::from_xyz(2.0, 1.0, 0.0),
             ),
         ],
     ));

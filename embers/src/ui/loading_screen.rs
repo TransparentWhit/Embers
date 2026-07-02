@@ -1,15 +1,15 @@
-use super::{ActiveOverlay, GameState, RootNode, TextureAnimation, TextureScaling, text};
+use super::{ActiveOverlay, GameState, text};
 use crate::dim::{ActiveDimension, Dimension, DimensionGenerationRequest};
 use crate::pld::meta::ReloadMetadataRequest;
 use crate::pld::{
     EvictPayloadScopeRequest, FetchPayloadScopeRequest, MountPayloadSourceRequest,
-    PayloadFetchingComplete, PayloadManager, PayloadScopeId, RefetchPayloadRequest,
-    UnmountPayloadSourceRequest, ui_image_node,
+    PayloadFetchingComplete, PayloadScopeId, RefetchPayloadRequest, UnmountPayloadSourceRequest,
+    ui_image_node,
 };
 use crate::utils::{Keyed, NamespacedKey};
 use bevy::app::App;
 use bevy::asset::io::AssetSourceId;
-use bevy::color::palettes::css::YELLOW;
+use bevy::color::palettes::css::{WHITE, YELLOW};
 use bevy::ecs::query::{QueryData, ReadOnlyQueryData};
 use bevy::ecs::system::ObserverSystem;
 use bevy::ecs::system::command::{insert_resource, trigger};
@@ -39,6 +39,9 @@ pub enum MainMenuEntryContext {
     ExitWorld,
     SaveAndExitWorld,
 }
+
+// TODO: Fix
+// Warning: Faulty logic ahead
 
 #[derive(Component, Default)]
 struct LoadingTask;
@@ -183,6 +186,7 @@ fn begin_loading(
     active_overlay: Res<State<ActiveOverlay>>,
     mut loading_overlay: ResMut<LoadingOverlay>,
     mut next_overlay: ResMut<NextState<ActiveOverlay>>,
+    mut settings: ResMut<LoadingScreenSettings>,
 ) {
     let span = info_span!("loading", load = ?*loading);
     let entered = span.enter();
@@ -193,33 +197,57 @@ fn begin_loading(
         Load::Reload => **active_overlay,
     });
     next_overlay.set(ActiveOverlay::LoadingScreen);
-    match &*loading {
-        Load::EnterDimension(context, dimension_key) => {
-            let load = (
-                DimensionGenerationTask(dimension_key.clone()),
-                related!(
-                    TaskDependencies[(
-                        ReloadMetadataTask,
-                        related!(TaskDependencies[
-                            FetchPayloadScopeTask(PayloadScopeId::Dimension(dimension_key.clone())),
-                        ])
-                    )]
-                ),
-            );
-            match context {
-                DimensionEntryContext::EnterWorld => {
-                    commands.spawn((
-                        GameStateTransitionTask(GameState::Dimension),
-                        related!(TaskDependencies[
-                            load,
-                        ]),
-                    ));
-                }
-                DimensionEntryContext::GatewayTravel | DimensionEntryContext::PortalTravel => {
-                    todo!();
-                }
+    let loading = &*loading;
+    *settings = match loading {
+        Load::EnterDimension(context, dimension) => LoadingScreenSettings {
+            load_tip: Some(match context {
+                DimensionEntryContext::EnterWorld => "Joining".to_string(),
+                DimensionEntryContext::GatewayTravel => "Preparing warp".to_string(),
+                DimensionEntryContext::PortalTravel => "Traveling to".to_string(),
+            }),
+            target_tip: Some(dimension.to_string()),
+            background: None,
+        },
+        Load::EnterMainMenu(
+            MainMenuEntryContext::ExitWorld | MainMenuEntryContext::SaveAndExitWorld,
+        ) => LoadingScreenSettings {
+            load_tip: Some("Leaving".to_string()),
+            target_tip: None,
+            background: None,
+        },
+        Load::EnterMainMenu(MainMenuEntryContext::Init) | Load::Reload => LoadingScreenSettings {
+            load_tip: None,
+            target_tip: None,
+            background: None,
+        },
+    };
+    match loading {
+        Load::EnterDimension(context, dimension_key) => match context {
+            DimensionEntryContext::EnterWorld => {
+                commands.spawn((
+                    DimensionGenerationTask(dimension_key.clone()),
+                    related!(
+                        TaskDependencies[(
+                            ReloadMetadataTask,
+                            related!(
+                                TaskDependencies[(
+                                    FetchPayloadScopeTask(PayloadScopeId::Dimension(
+                                        dimension_key.clone()
+                                    )),
+                                    related!(
+                                        TaskDependencies
+                                            [GameStateTransitionTask(GameState::Dimension)]
+                                    ),
+                                )]
+                            )
+                        )]
+                    ),
+                ));
             }
-        }
+            DimensionEntryContext::GatewayTravel | DimensionEntryContext::PortalTravel => {
+                todo!();
+            }
+        },
         Load::EnterMainMenu(MainMenuEntryContext::Init) => {
             commands.spawn((
                 ReloadMetadataTask,
@@ -370,44 +398,38 @@ fn complete_instant_task<T: LoadingTaskComponent>()
     )
 }
 
-fn init(
-    mut commands: Commands,
-    payload_manager: Res<PayloadManager>,
-    asset_server: Res<AssetServer>,
-    images: Res<Assets<Image>>,
-    texture_atlas_layouts: Res<Assets<TextureAtlasLayout>>,
-    texture_animations: Res<Assets<TextureAnimation>>,
-    texture_scalings: Res<Assets<TextureScaling>>,
-    fonts: Res<Assets<Font>>,
-    root_node: Single<Entity, With<RootNode>>,
-) {
-    commands.spawn((
-        ChildOf(*root_node),
-        DespawnOnExit(ActiveOverlay::LoadingScreen),
+#[derive(Resource)]
+struct LoadingScreenSettings {
+    load_tip: Option<String>,
+    target_tip: Option<String>,
+    background: Option<()>,
+}
+
+fn init(mut commands: Commands, mut settings: ResMut<LoadingScreenSettings>) {
+    commands.spawn_scene(bsn! {
+        DespawnOnExit<ActiveOverlay>(ActiveOverlay::LoadingScreen)
         Node {
             width: percent(100),
             height: percent(100),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
-            ..default()
-        },
-        children![
+        }
+        Children [
             (
                 Node {
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
+                    position_type: PositionType::Absolute,
+                    height: px(32),
+                    left: px(2),
+                    bottom: px(2),
                     display: Display::Flex,
-                    flex_direction: FlexDirection::Column,
-                    ..default()
-                },
-                /*children![text(
-                    &payload_manager,
-                    &asset_server,
-                    &fonts,
-                    "Loading...",
-                    YELLOW,
-                    21.
-                )]*/
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::Start,
+                    align_items: AlignItems::Center,
+                }
+                Children [
+                    ({ settings.load_tip.take().map(|tip| text(tip, WHITE, 14.)) }),
+                    ({ settings.target_tip.take().map(|tip| text(tip, YELLOW, 14.)) }),
+                ]
             ),
             (
                 Node {
@@ -419,27 +441,19 @@ fn init(
                     flex_direction: FlexDirection::Row,
                     justify_content: JustifyContent::End,
                     align_items: AlignItems::Center,
-                    ..default()
-                },
-                children![(
-                    Node {
-                        width: px(32),
-                        height: px(32),
-                        ..default()
-                    },
-                    ui_image_node(
-                        &payload_manager,
-                        &asset_server,
-                        &images,
-                        &texture_atlas_layouts,
-                        &texture_animations,
-                        &texture_scalings,
-                        "loading_indicator"
+                }
+                Children [
+                    (
+                        Node {
+                            width: px(32),
+                            height: px(32),
+                        }
+                        ui_image_node("loading_indicator")
                     ),
-                ),]
-            )
-        ],
-    ));
+                ]
+            ),
+        ]
+    });
 }
 
 fn fina() {}

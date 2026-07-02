@@ -1,10 +1,14 @@
 pub mod physics;
 
+use bevy::ecs::template::TemplateContext;
 use bevy::prelude::*;
+use derive_where::derive_where;
 use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize};
+use std::any::type_name;
 use std::fmt;
-use std::path::{Component, Path};
+use std::marker::PhantomData;
+use std::path::{Component as PathComponent, Path};
 use std::result::Result;
 use std::str::FromStr;
 use std::sync::LazyLock;
@@ -273,27 +277,27 @@ pub fn path_to_unix_components<P: AsRef<Path>>(path: P) -> String {
     let mut result = String::new();
     for component in path.as_ref().components() {
         match component {
-            Component::Prefix(prefix) => {
+            PathComponent::Prefix(prefix) => {
                 result.push_str(&prefix.as_os_str().to_string_lossy());
             }
-            Component::RootDir => {
+            PathComponent::RootDir => {
                 if !result.ends_with('/') {
                     result.push('/');
                 }
             }
-            Component::CurDir => {
+            PathComponent::CurDir => {
                 if !result.is_empty() && !result.ends_with('/') {
                     result.push('/');
                 }
                 result.push('.');
             }
-            Component::ParentDir => {
+            PathComponent::ParentDir => {
                 if !result.is_empty() && !result.ends_with('/') {
                     result.push('/');
                 }
                 result.push_str("..");
             }
-            Component::Normal(normal) => {
+            PathComponent::Normal(normal) => {
                 if !result.is_empty() && !result.ends_with('/') {
                     result.push('/');
                 }
@@ -307,6 +311,12 @@ pub fn path_to_unix_components<P: AsRef<Path>>(path: P) -> String {
 #[derive(Debug, Default)]
 pub struct TextureAtlasManifest {
     textures_to_place: Vec<(Option<AssetId<Image>>, Handle<Image>)>,
+}
+
+#[derive(Debug, Error)]
+pub enum TextureAtlasManifestError {
+    #[error("The manifest held a handle({0:#?}) that referenced a nonexistent image")]
+    InvalidTextureHandle(Handle<Image>),
 }
 
 impl TextureAtlasManifest {
@@ -335,10 +345,39 @@ impl TextureAtlasManifest {
     }
 }
 
-#[derive(Debug, Error)]
-pub enum TextureAtlasManifestError {
-    #[error("The manifest held a handle({0:#?}) that referenced a nonexistent image")]
-    InvalidTextureHandle(Handle<Image>),
+#[derive_where(Default)]
+pub struct RemoveComponentTemplate<C: Component> {
+    _marker: PhantomData<C>,
+}
+
+impl<C: Component> RemoveComponentTemplate<C> {
+    pub fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+#[derive_where(Debug)]
+#[derive(Error)]
+#[error("Component `{}` was removed", type_name::<C>())]
+struct ComponentRemoved<C: Component> {
+    _marker: PhantomData<C>,
+}
+
+impl<C: Component> Template for RemoveComponentTemplate<C> {
+    type Output = C;
+    fn build_template(&self, context: &mut TemplateContext) -> bevy::prelude::Result<Self::Output> {
+        context.entity.remove::<C>();
+        Err(BevyError::ignore(ComponentRemoved::<C> {
+            _marker: PhantomData,
+        }))
+    }
+    fn clone_template(&self) -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
 }
 
 #[cfg(test)]

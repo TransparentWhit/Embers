@@ -409,9 +409,12 @@ pub(super) fn plugin(app: &mut App) {
                                     }, _item| {
                                         let (player, transform) = **player;
                                         let transform = transform.clone();
+                                        commands.spawn_scene(bsn! {
+                                            primed_tnt()
+                                        });
                                         commands.queue(move |world: &mut World| {
                                             world.spawn((
-                                                primed_tnt(world.resource::<PayloadManager>(), world.resource::<AssetServer>(), world.resource::<Assets<Gltf>>()),
+                                                primed_tnt(),
                                                 exclude_source(player),
                                                 transform.clone(),
                                                 LinearVelocity(transform.rotation * -Vec3::Z * velocity),

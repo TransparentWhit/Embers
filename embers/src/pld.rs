@@ -4,47 +4,38 @@
 pub mod meta;
 
 use crate::path;
-use crate::ui::{TextureAnimation, TextureScaling};
-use crate::utils::NamespacedKey;
+use crate::ui::{AnimatedTexture, TextureAnimation, TextureScaling};
+use crate::utils::{Keyed, NamespacedKey, RemoveComponentTemplate};
+use atomicow::CowArc;
 use bevy::app::App;
 use bevy::asset::io::AssetSourceId;
-use bevy::asset::{AssetPath, LoadState, LoadedFolder, embedded_asset};
-use bevy::ecs::system::SystemParam;
+use bevy::asset::{AssetPath, LoadedFolder, embedded_asset};
+use bevy::ecs::template::{TemplateContext, TemplateTuple};
+use bevy::gltf::{GltfMaterial, GltfMesh, GltfNode, GltfSkin};
 use bevy::prelude::*;
 use derive_where::derive_where;
+use std::any::TypeId;
 use std::cmp::PartialEq;
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::marker::PhantomData;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+use thiserror::Error;
 use uuid::Uuid;
 
-#[derive(Component)]
-#[derive_where(Default)]
-#[component(storage = "SparseSet")]
-pub struct OptionalPayload<A: Asset>(Handle<A>);
+pub trait PayloadPath {
+    fn with_added_extension<S: AsRef<OsStr>>(&self, extension: S) -> Self;
+}
 
-pub fn resolve_optional_payload<A: Asset>(
-    // TODO use bsn after Bevy 0.19
-    on_present: impl Fn(&mut EntityCommands, Handle<A>, &A) + Send + Sync + 'static,
-    on_absent: impl Fn(&mut EntityCommands) + Send + Sync + 'static,
-) -> impl Fn(Commands, Res<AssetServer>, Res<Assets<A>>, Query<(Entity, &OptionalPayload<A>)>) {
-    move |mut commands, asset_server, payloads, query| {
-        for (entity, OptionalPayload(handle)) in &query {
-            let mut entity_commands = commands.entity(entity);
-            match asset_server.get_load_state(handle) {
-                Some(LoadState::Loaded) => {
-                    entity_commands.remove::<OptionalPayload<A>>();
-                    on_present(
-                        &mut entity_commands,
-                        handle.clone(),
-                        payloads.get(handle).unwrap(),
-                    );
-                }
-                Some(LoadState::Failed(..)) | None => {
-                    entity_commands.remove::<OptionalPayload<A>>();
-                    on_absent(&mut entity_commands);
-                }
-                _ => {}
-            }
+impl PayloadPath for AssetPath<'_> {
+    fn with_added_extension<S: AsRef<OsStr>>(&self, extension: S) -> Self {
+        let mut path = self.path().to_path_buf();
+        path.add_extension(extension);
+        let path = AssetPath::from_path_buf(path).with_source(self.source().clone_owned());
+        match self.label_cow() {
+            Some(label) => path.with_label(label.into_owned()),
+            None => path,
         }
     }
 }
@@ -110,9 +101,9 @@ impl PayloadScope {
             .into_owned()
             .with_source(source.into().into_owned());
         Self {
-            fonts_root: root.resolve("fonts").unwrap(),
-            models_root: root.resolve("models").unwrap(),
-            textures_root: root.resolve("textures").unwrap(),
+            fonts_root: root.resolve_str("fonts").unwrap(),
+            models_root: root.resolve_str("models").unwrap(),
+            textures_root: root.resolve_str("textures").unwrap(),
             root,
         }
     }
@@ -131,15 +122,6 @@ impl PayloadManager {
             sources: Vec::with_capacity(1),
         }
     }
-}
-
-// TODO do we need this?
-#[derive(SystemParam)]
-pub struct PayloadResolutionParam<'w, 's, A: Asset> {
-    payload_manager: Res<'w, PayloadManager>,
-    asset_server: Res<'w, AssetServer>,
-    assets: Res<'w, Assets<A>>,
-    _marker: PhantomData<&'s ()>,
 }
 
 #[derive(Event)]
@@ -164,7 +146,6 @@ fn handle_fetch_scope_request(
         payload_hold
             .loading_scopes
             .insert(asset_server.load_folder(&scope.root));
-        println!("Load {}", scope.root);
         scopes.push(scope);
     }
 }
@@ -291,14 +272,6 @@ fn handle_reload_request(
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub enum GltfElementId<'name> {
-    #[default]
-    Default,
-    Index(usize),
-    Name(&'name str),
-}
-
 fn resolve<'path, A: Asset>(
     payload_manager: &PayloadManager,
     asset_server: &AssetServer,
@@ -308,9 +281,7 @@ fn resolve<'path, A: Asset>(
     let path = path.into();
     for (scopes, _source_id) in payload_manager.sources.iter().rev() {
         for scope in scopes.iter().rev() {
-            if let Some(handle) = asset_server
-                .get_handle(scope.root.resolve(&*path.path().to_string_lossy()).unwrap())
-            {
+            if let Some(handle) = asset_server.get_handle(scope.root.resolve(&path)) {
                 return Some(handle);
             }
         }
@@ -324,298 +295,519 @@ fn resolve<'path, A: Asset>(
     }
     None
 }
+
 #[inline]
-pub fn actor_scene(
-    payload_manager: &PayloadManager,
-    asset_server: &AssetServer,
-    models: &Assets<Gltf>,
-    key: &NamespacedKey,
-    id: GltfElementId,
-) -> Option<Handle<Scene>> {
-    scene(
-        payload_manager,
-        asset_server,
-        models,
-        &*format!("actors/{}", key.path_string()),
-        id,
-    )
+pub fn pld<A: Asset>(value: impl Into<PayloadTemplate<A>>) -> PayloadTemplate<A> {
+    value.into()
 }
+
 #[inline]
-pub fn animate_actor(
-    payload_manager: &PayloadManager,
-    animation_player: &mut AnimationPlayer,
-    asset_server: &AssetServer,
-    models: &Assets<Gltf>,
-    key: &NamespacedKey,
-    id: GltfElementId,
-) -> Option<AnimationGraphHandle> {
-    animate(
-        payload_manager,
-        animation_player,
-        asset_server,
-        models,
-        &*format!("actors/{}", key.path_string()),
-        id,
-    )
+pub fn optional_pld<A: Asset>(value: impl Into<PayloadTemplate<A>>) -> OptionalPayloadTemplate<A> {
+    OptionalPayloadTemplate(pld(value))
 }
+
 #[inline]
-pub fn block_texture<'path>(
-    payload_manager: &PayloadManager,
-    asset_server: &AssetServer,
-    images: &Assets<Image>,
-    texture_atlas_layouts: &Assets<TextureAtlasLayout>,
-    texture_animations: &Assets<TextureAnimation>,
-    texture_scalings: &Assets<TextureScaling>,
-    key: &NamespacedKey,
-) -> (
-    Handle<Image>,
-    Option<Handle<TextureAtlasLayout>>,
-    Option<Handle<TextureAnimation>>,
-    Option<Handle<TextureScaling>>,
-) {
-    rich_image(
-        payload_manager,
-        asset_server,
-        images,
-        texture_atlas_layouts,
-        texture_animations,
-        texture_scalings,
-        &*format!("blocks/{}", key.path_string()),
-    )
+pub fn payload_value<A: Asset>(value: impl Into<A>) -> PayloadTemplate<A> {
+    PayloadTemplate::value(value.into())
 }
-#[inline]
-pub fn ui_image_node<'path>(
-    payload_manager: &PayloadManager,
-    asset_server: &AssetServer,
-    images: &Assets<Image>,
-    texture_atlas_layouts: &Assets<TextureAtlasLayout>,
-    texture_animations: &Assets<TextureAnimation>,
-    texture_scalings: &Assets<TextureScaling>,
-    path: impl Into<&'path str>,
-) -> (
-    ImageNode,
-    OptionalPayload<TextureAnimation>, // TODO use bsn after Bevy 0.19
-) {
-    image_node(
-        payload_manager,
-        asset_server,
-        images,
-        texture_atlas_layouts,
-        texture_animations,
-        texture_scalings,
-        &*format!("ui/{}", path.into()),
-    )
+
+#[derive(Debug)]
+pub enum PayloadTemplate<A: Asset> {
+    Handle(Handle<A>),
+    Path(AssetPath<'static>),
+    Value(Arc<Mutex<Result<Option<A>, Handle<A>>>>),
 }
-#[inline]
-pub fn item_image_node(
-    payload_manager: &PayloadManager,
-    asset_server: &AssetServer,
-    images: &Assets<Image>,
-    texture_atlas_layouts: &Assets<TextureAtlasLayout>,
-    texture_animations: &Assets<TextureAnimation>,
-    texture_scalings: &Assets<TextureScaling>,
-    key: &NamespacedKey,
-) -> (
-    ImageNode,
-    OptionalPayload<TextureAnimation>, // TODO use bsn after Bevy 0.19
-) {
-    image_node(
-        payload_manager,
-        asset_server,
-        images,
-        texture_atlas_layouts,
-        texture_animations,
-        texture_scalings,
-        &*format!("items/{}", key.path_string()),
-    )
+
+impl<A: Asset> Default for PayloadTemplate<A> {
+    fn default() -> Self {
+        Self::Handle(default())
+    }
 }
-#[inline]
-pub fn default_scene(
-    payload_manager: &PayloadManager,
-    asset_server: &AssetServer,
-    models: &Assets<Gltf>,
-) -> Handle<Scene> {
-    // TODO use embedded bsn when bsn reader comes out
-    scene(
-        payload_manager,
-        asset_server,
-        models,
-        "missingno",
-        GltfElementId::Default,
-    )
-    .unwrap()
+
+impl<A: Asset> From<Handle<A>> for PayloadTemplate<A> {
+    fn from(value: Handle<A>) -> Self {
+        Self::Handle(value)
+    }
 }
-#[inline]
-fn image_node<'path>(
-    payload_manager: &PayloadManager,
-    asset_server: &AssetServer,
-    images: &Assets<Image>,
-    texture_atlas_layouts: &Assets<TextureAtlasLayout>,
-    texture_animations: &Assets<TextureAnimation>,
-    texture_scalings: &Assets<TextureScaling>,
-    path: impl Into<&'path str>,
-) -> (
-    ImageNode,
-    OptionalPayload<TextureAnimation>, // TODO use bsn after Bevy 0.19
-) {
-    let (image, atlas, animation, scaling) = rich_image(
-        payload_manager,
-        asset_server,
-        images,
-        texture_atlas_layouts,
-        texture_animations,
-        texture_scalings,
-        path,
-    );
-    let mut node = ImageNode::new(image).with_mode(
-        scaling
-            .and_then(|scaling| texture_scalings.get(&scaling))
-            .map(NodeImageMode::from)
-            .unwrap_or(NodeImageMode::Stretch),
-    );
-    node.texture_atlas = atlas.map(TextureAtlas::from);
-    (node, OptionalPayload(animation.unwrap_or_default()))
+
+impl<A: Asset> From<AssetPath<'_>> for PayloadTemplate<A> {
+    fn from(value: AssetPath<'_>) -> Self {
+        Self::Path(value.into_owned())
+    }
 }
-#[inline]
-fn scene<'path>(
-    payload_manager: &PayloadManager,
-    asset_server: &AssetServer,
-    models: &Assets<Gltf>,
-    path: impl Into<&'path str>,
-    id: GltfElementId,
-) -> Option<Handle<Scene>> {
-    model(payload_manager, asset_server, models, path)
-        .and_then(|handle| models.get(&handle))
-        .and_then(|gltf| match id {
-            GltfElementId::Default => gltf.default_scene.as_ref(),
-            GltfElementId::Index(index) => gltf.scenes.get(index),
-            GltfElementId::Name(name) => gltf.named_scenes.get(name),
+
+impl<A: Asset> PayloadTemplate<A> {
+    pub fn value(value: A) -> Self {
+        Self::Value(Arc::new(Mutex::new(Ok(Some(value)))))
+    }
+}
+
+#[derive(Debug, Error)]
+#[error("Couldn't find payload in {path}")]
+struct PayloadNotFoundError {
+    path: AssetPath<'static>,
+}
+
+impl<A: Asset> Template for PayloadTemplate<A> {
+    type Output = Handle<A>;
+    fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
+        match self {
+            Self::Handle(handle) => Ok(handle.clone()),
+            Self::Path(path) => resolve(
+                context.entity.resource::<PayloadManager>(),
+                context.entity.resource::<AssetServer>(),
+                context.entity.resource::<Assets<A>>(),
+                path,
+            )
+            .or_else(|| fallback(context.entity.resource::<AssetServer>()))
+            .ok_or_else(|| BevyError::error(PayloadNotFoundError { path: path.clone() })),
+            Self::Value(value_or_handle) => {
+                let value_or_handle = &mut *value_or_handle.lock().unwrap();
+                match value_or_handle {
+                    Ok(value) => {
+                        let handle = context
+                            .resource_mut::<Assets<A>>()
+                            .add(value.take().unwrap());
+                        *value_or_handle = Err(handle.clone());
+                        Ok(handle)
+                    }
+                    Err(handle) => Ok(handle.clone()),
+                }
+            }
+        }
+    }
+    fn clone_template(&self) -> Self {
+        match self {
+            Self::Handle(handle) => Self::Handle(handle.clone()),
+            Self::Path(path) => Self::Path(path.clone()),
+            Self::Value(value) => Self::Value(value.clone()),
+        }
+    }
+}
+
+#[derive_where(Default)]
+pub struct OptionalPayloadTemplate<A: Asset>(pub PayloadTemplate<A>);
+
+impl<A: Asset> Template for OptionalPayloadTemplate<A> {
+    type Output = Option<Handle<A>>;
+    fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
+        Ok(self.0.build_template(context).ok())
+    }
+    fn clone_template(&self) -> Self {
+        Self(self.0.clone_template())
+    }
+}
+
+#[derive(Default)]
+struct TextFontTemplate {
+    font: PayloadTemplate<Font>,
+    size: FontSize,
+}
+
+impl Template for TextFontTemplate {
+    type Output = TextFont;
+    fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
+        Ok(TextFont {
+            font: FontSource::Handle(self.font.build_template(context)?),
+            font_size: self.size,
+            font_smoothing: FontSmoothing::None,
+            ..default()
         })
-        .cloned()
+    }
+    fn clone_template(&self) -> Self {
+        Self {
+            font: self.font.clone_template(),
+            size: self.size,
+        }
+    }
 }
+
+#[inline]
+pub fn text_font(key: &impl Keyed, size: impl Into<FontSize>) -> impl Scene {
+    template_value(TextFontTemplate {
+        font: pld(AssetPath::from_path(Path::new("fonts"))
+            .resolve_str(&*key.key().path_string())
+            .expect("Invalid font key")
+            .with_added_extension("ttf")),
+        size: size.into(),
+    })
+}
+
+#[inline]
+fn model<'path>(path: impl Into<AssetPath<'path>>) -> PayloadTemplate<Gltf> {
+    pld(AssetPath::from_path(Path::new("models"))
+        .resolve(&path.into())
+        .with_added_extension("glb"))
+}
+
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+pub enum GltfElementId<'name> {
+    #[default]
+    Default,
+    Index(usize),
+    Name(CowArc<'name, str>),
+}
+
+impl GltfElementId<'_> {
+    pub fn into_owned(self) -> GltfElementId<'static> {
+        match self {
+            Self::Default => GltfElementId::Default,
+            Self::Index(index) => GltfElementId::Index(index),
+            Self::Name(name) => GltfElementId::Name(name.into_owned()),
+        }
+    }
+    pub fn clone_owned(&self) -> GltfElementId<'static> {
+        self.clone().into_owned()
+    }
+}
+
+pub trait GltfElement: Asset {
+    fn from_gltf<'gltf>(gltf: &'gltf Gltf, id: &GltfElementId) -> Option<&'gltf Handle<Self>>
+    where
+        Self: Sized;
+}
+
+impl GltfElement for WorldAsset {
+    fn from_gltf<'gltf>(gltf: &'gltf Gltf, id: &GltfElementId) -> Option<&'gltf Handle<Self>>
+    where
+        Self: Sized,
+    {
+        match id {
+            GltfElementId::Default => gltf.default_scene.as_ref(),
+            GltfElementId::Index(index) => gltf.scenes.get(*index),
+            GltfElementId::Name(name) => gltf.named_scenes.get(name.as_ref()),
+        }
+    }
+}
+
+impl GltfElement for GltfMesh {
+    fn from_gltf<'gltf>(gltf: &'gltf Gltf, id: &GltfElementId) -> Option<&'gltf Handle<Self>>
+    where
+        Self: Sized,
+    {
+        match id {
+            GltfElementId::Default => None,
+            GltfElementId::Index(index) => gltf.meshes.get(*index),
+            GltfElementId::Name(name) => gltf.named_meshes.get(name.as_ref()),
+        }
+    }
+}
+
+impl GltfElement for GltfMaterial {
+    fn from_gltf<'gltf>(gltf: &'gltf Gltf, id: &GltfElementId) -> Option<&'gltf Handle<Self>>
+    where
+        Self: Sized,
+    {
+        match id {
+            GltfElementId::Default => None,
+            GltfElementId::Index(index) => gltf.materials.get(*index),
+            GltfElementId::Name(name) => gltf.named_materials.get(name.as_ref()),
+        }
+    }
+}
+
+impl GltfElement for GltfNode {
+    fn from_gltf<'gltf>(gltf: &'gltf Gltf, id: &GltfElementId) -> Option<&'gltf Handle<Self>>
+    where
+        Self: Sized,
+    {
+        match id {
+            GltfElementId::Default => None,
+            GltfElementId::Index(index) => gltf.nodes.get(*index),
+            GltfElementId::Name(name) => gltf.named_nodes.get(name.as_ref()),
+        }
+    }
+}
+
+impl GltfElement for GltfSkin {
+    fn from_gltf<'gltf>(gltf: &'gltf Gltf, id: &GltfElementId) -> Option<&'gltf Handle<Self>>
+    where
+        Self: Sized,
+    {
+        match id {
+            GltfElementId::Default => None,
+            GltfElementId::Index(index) => gltf.skins.get(*index),
+            GltfElementId::Name(name) => gltf.named_skins.get(name.as_ref()),
+        }
+    }
+}
+
+impl GltfElement for AnimationClip {
+    fn from_gltf<'gltf>(gltf: &'gltf Gltf, id: &GltfElementId) -> Option<&'gltf Handle<Self>>
+    where
+        Self: Sized,
+    {
+        match id {
+            GltfElementId::Default => None,
+            GltfElementId::Index(index) => gltf.animations.get(*index),
+            GltfElementId::Name(name) => gltf.named_animations.get(name.as_ref()),
+        }
+    }
+}
+
+#[derive_where(Default)]
+pub struct GltfElementTemplate<E: GltfElement> {
+    model: PayloadTemplate<Gltf>,
+    id: GltfElementId<'static>,
+    _marker: PhantomData<E>,
+}
+
+#[derive(Debug, Error)]
+#[error("Couldn't find gltf element {id:?} in {model:?}")]
+struct GltfElementNotFoundError {
+    model: PayloadTemplate<Gltf>,
+    id: GltfElementId<'static>,
+}
+
+impl<E: GltfElement> Template for GltfElementTemplate<E> {
+    type Output = Handle<E>;
+    fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
+        self.model
+            .build_template(context)
+            .map(|handle| context.resource::<Assets<Gltf>>().get(&handle).unwrap())
+            .and_then(|gltf| {
+                E::from_gltf(&gltf, &self.id).cloned().ok_or_else(|| {
+                    BevyError::error(GltfElementNotFoundError {
+                        model: self.model.clone_template(),
+                        id: self.id.clone(),
+                    })
+                })
+            })
+    }
+    fn clone_template(&self) -> Self {
+        Self {
+            model: self.model.clone_template(),
+            id: self.id.clone(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+#[inline]
+fn model_element<'path, E: GltfElement>(
+    path: impl Into<AssetPath<'path>>,
+    id: GltfElementId,
+) -> GltfElementTemplate<E> {
+    GltfElementTemplate {
+        model: model(path),
+        id: id.into_owned(),
+        _marker: PhantomData,
+    }
+}
+
+pub struct AnimationGraphHandleTemplate {
+    clip: GltfElementTemplate<AnimationClip>,
+}
+
+impl Template for AnimationGraphHandleTemplate {
+    type Output = AnimationGraphHandle;
+    fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
+        self.clip
+            .build_template(context)
+            .map(AnimationGraph::from_clip)
+            .map(|(graph, index)| {
+                context
+                    .entity
+                    .insert_if_new(AnimationPlayer::default())
+                    .get_mut::<AnimationPlayer>()
+                    .unwrap()
+                    .play(index)
+                    .repeat();
+                AnimationGraphHandle(context.resource_mut::<Assets<AnimationGraph>>().add(graph))
+            })
+    }
+    fn clone_template(&self) -> Self {
+        Self {
+            clip: self.clip.clone_template(),
+        }
+    }
+}
+
 #[inline]
 fn animate<'path>(
-    payload_manager: &PayloadManager,
-    animation_player: &mut AnimationPlayer,
-    asset_server: &AssetServer,
-    models: &Assets<Gltf>,
-    path: impl Into<&'path str>,
+    path: impl Into<AssetPath<'path>>,
     id: GltfElementId,
-) -> Option<AnimationGraphHandle> {
-    animation(payload_manager, asset_server, models, path, id)
-        .map(AnimationGraph::from_clip)
-        .map(|(graph, index)| {
-            animation_player.play(index).repeat();
-            AnimationGraphHandle(asset_server.add(graph))
-        })
+) -> AnimationGraphHandleTemplate {
+    AnimationGraphHandleTemplate {
+        clip: model_element(path, id),
+    }
 }
+
 #[inline]
-fn animation<'path>(
-    payload_manager: &PayloadManager,
-    asset_server: &AssetServer,
-    models: &Assets<Gltf>,
-    path: impl Into<&'path str>,
-    id: GltfElementId,
-) -> Option<Handle<AnimationClip>> {
-    model(payload_manager, asset_server, models, path)
-        .and_then(|handle| models.get(&handle))
-        .and_then(|gltf| match id {
-            GltfElementId::Default => None,
-            GltfElementId::Index(index) => gltf.animations.get(index),
-            GltfElementId::Name(name) => gltf.named_animations.get(name),
-        })
-        .cloned()
+pub fn animate_actor(key: &NamespacedKey, id: GltfElementId) -> AnimationGraphHandleTemplate {
+    animate(format!("actors/{}", key.path_string()), id)
 }
+
+#[derive(Default)]
+struct WorldAssetRootTemplate {
+    scene: GltfElementTemplate<WorldAsset>,
+}
+
+impl Template for WorldAssetRootTemplate {
+    type Output = WorldAssetRoot;
+    fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
+        Ok(WorldAssetRoot(self.scene.build_template(context)?))
+    }
+    fn clone_template(&self) -> Self {
+        Self {
+            scene: self.scene.clone_template(),
+        }
+    }
+}
+
 #[inline]
-fn plain_image<'path>(
-    payload_manager: &PayloadManager,
-    asset_server: &AssetServer,
-    images: &Assets<Image>,
-    path: impl Into<&'path str>,
-) -> Handle<Image> {
-    resolve(
-        payload_manager,
-        asset_server,
-        images,
-        format!("textures/{}.png", path.into()),
-    )
-    .unwrap_or_else(|| missingno(asset_server))
+pub fn default_scene() -> GltfElementTemplate<WorldAsset> {
+    // TODO use embedded bsn when bsn reader comes out
+    model_element("missingno", GltfElementId::Default)
 }
+
+#[inline]
+pub fn actor_scene(key: &NamespacedKey, id: GltfElementId) -> WorldAssetRootTemplate {
+    WorldAssetRootTemplate {
+        scene: model_element(format!("actors/{}", key.path_string()), id),
+    }
+}
+
+#[inline]
+fn plain_image<'path>(path: impl Into<AssetPath<'path>>) -> PayloadTemplate<Image> {
+    pld(AssetPath::from_path(Path::new("textures"))
+        .resolve(&path.into())
+        .with_added_extension("png"))
+}
+
 #[inline]
 fn rich_image<'path>(
-    payload_manager: &PayloadManager,
-    asset_server: &AssetServer,
-    images: &Assets<Image>,
-    texture_atlas_layouts: &Assets<TextureAtlasLayout>,
-    texture_animations: &Assets<TextureAnimation>,
-    texture_scalings: &Assets<TextureScaling>,
-    path: impl Into<&'path str>,
-) -> (
-    Handle<Image>,
-    Option<Handle<TextureAtlasLayout>>,
-    Option<Handle<TextureAnimation>>,
-    Option<Handle<TextureScaling>>,
-) {
-    let path = path.into();
-    (
-        resolve(
-            payload_manager,
-            asset_server,
-            images,
-            format!("textures/{}.png", path),
-        )
-        .unwrap_or_else(|| missingno(asset_server)),
-        resolve(
-            payload_manager,
-            asset_server,
-            texture_atlas_layouts,
-            format!("textures/{}.atlas.toml", path),
-        ),
-        resolve(
-            payload_manager,
-            asset_server,
-            texture_animations,
-            format!("textures/{}.animation.toml", path),
-        ),
-        resolve(
-            payload_manager,
-            asset_server,
-            texture_scalings,
-            format!("textures/{}.scaling.toml", path),
-        ),
-    )
+    path: impl Into<AssetPath<'path>>,
+) -> TemplateTuple<(
+    PayloadTemplate<Image>,
+    OptionalPayloadTemplate<TextureAtlasLayout>,
+    OptionalPayloadTemplate<TextureAnimation>,
+    OptionalPayloadTemplate<TextureScaling>,
+)> {
+    let path = AssetPath::from_path(Path::new("textures")).resolve(&path.into());
+    TemplateTuple((
+        pld(path.with_added_extension("png")),
+        optional_pld(path.with_added_extension("atlas.toml")),
+        optional_pld(path.with_added_extension("animation.toml")),
+        optional_pld(path.with_added_extension("scaling.toml")),
+    ))
 }
+
 #[inline]
-fn model<'path>(
-    payload_manager: &PayloadManager,
-    asset_server: &AssetServer,
-    models: &Assets<Gltf>,
-    path: impl Into<&'path str>,
-) -> Option<Handle<Gltf>> {
-    resolve(
-        payload_manager,
-        asset_server,
-        models,
-        format!("models/{}.glb", path.into()),
-    )
-}
-#[inline]
-pub fn font(
-    payload_manager: &PayloadManager,
-    asset_server: &AssetServer,
-    fonts: &Assets<Font>,
+pub fn block_texture(
     key: &NamespacedKey,
-) -> Option<Handle<Font>> {
-    resolve(
-        payload_manager,
-        asset_server,
-        fonts,
-        format!("fonts/{}.ttf", key.path_string()),
-    )
+) -> TemplateTuple<(
+    PayloadTemplate<Image>,
+    OptionalPayloadTemplate<TextureAtlasLayout>,
+    OptionalPayloadTemplate<TextureAnimation>,
+    OptionalPayloadTemplate<TextureScaling>,
+)> {
+    rich_image(format!("blocks/{}", key.path_string()))
 }
+
+#[derive(Default)]
+struct ImageNodeTemplate {
+    image: PayloadTemplate<Image>,
+    atlas: OptionalPayloadTemplate<TextureAtlasLayout>,
+    scaling: OptionalPayloadTemplate<TextureScaling>,
+}
+
+impl Template for ImageNodeTemplate {
+    type Output = ImageNode;
+    fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
+        let mut node = ImageNode::new(self.image.build_template(context)?).with_mode(
+            self.scaling
+                .build_template(context)?
+                .map(|scaling| {
+                    context
+                        .resource::<Assets<TextureScaling>>()
+                        .get(&scaling)
+                        .unwrap()
+                })
+                .map(NodeImageMode::from)
+                .unwrap_or(NodeImageMode::Stretch),
+        );
+        node.texture_atlas = self.atlas.build_template(context)?.map(TextureAtlas::from);
+        Ok(node)
+    }
+    fn clone_template(&self) -> Self {
+        Self {
+            image: self.image.clone_template(),
+            atlas: self.atlas.clone_template(),
+            scaling: self.scaling.clone_template(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct TextureAnimationTemplate {
+    animation: OptionalPayloadTemplate<TextureAnimation>,
+}
+
+#[derive(Debug, Error)]
+#[error("Texture animation was not found")]
+struct TextureAnimationNotFoundError;
+
+impl Template for TextureAnimationTemplate {
+    type Output = AnimatedTexture;
+    fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
+        self.animation
+            .build_template(context)
+            .and_then(|animation| match animation {
+                Some(animation) => Ok(AnimatedTexture::new(
+                    context
+                        .resource::<Assets<TextureAnimation>>()
+                        .get(&animation)
+                        .unwrap()
+                        .clone(),
+                )),
+                None => Err(BevyError::ignore(TextureAnimationNotFoundError)),
+            })
+            .inspect_err(|_error| {
+                context.entity.remove::<AnimatedTexture>();
+            })
+    }
+    fn clone_template(&self) -> Self {
+        Self {
+            animation: self.animation.clone_template(),
+        }
+    }
+}
+
 #[inline]
-pub fn missingno(asset_server: &AssetServer) -> Handle<Image> {
-    asset_server.load("embedded://embers/missingno.png")
+fn image_node<'path>(path: impl Into<AssetPath<'path>>) -> impl Scene {
+    let TemplateTuple((image, atlas, animation, scaling)) = rich_image(path);
+    bsn! {
+        template_value(ImageNodeTemplate { image, atlas, scaling })
+        template_value(TextureAnimationTemplate { animation })
+    }
+}
+
+#[inline]
+pub fn empty_image_node() -> impl Scene {
+    bsn! {
+        template_value(RemoveComponentTemplate::<ImageNode>::new())
+        template_value(RemoveComponentTemplate::<AnimatedTexture>::new())
+    }
+}
+
+#[inline]
+pub fn ui_image_node<'path>(path: impl Into<AssetPath<'path>>) -> impl Scene {
+    image_node(AssetPath::from_path(Path::new("ui")).resolve(&path.into()))
+}
+
+#[inline]
+pub fn item_image_node(key: &NamespacedKey) -> impl Scene {
+    image_node(format!("items/{}", key.path_string()))
+}
+
+#[inline]
+pub fn fallback<A: Asset>(asset_server: &AssetServer) -> Option<Handle<A>> {
+    if TypeId::of::<A>() == TypeId::of::<Image>() {
+        Some(asset_server.load("embedded://embers/missingno.png"))
+    } else {
+        None
+    }
 }
 
 pub(super) fn plugin(app: &mut App) {
