@@ -3,6 +3,8 @@ use crate::dim::PhysicsPreset;
 use crate::pld::{GltfElementId, PayloadManager, actor_scene, animate_actor};
 use crate::utils::NamespacedKey;
 use avian3d::prelude::*;
+use bevy::asset::HandleTemplate;
+use bevy::ecs::template::TemplateContext;
 use bevy::prelude::*;
 use bevy_sprinkles::prelude::*;
 use std::sync::LazyLock;
@@ -33,8 +35,19 @@ pub(super) fn fuse(
     for (entity, transform, mut animation_player, mut fuse) in query.iter_mut() {
         fuse.0.tick(time.delta());
         if fuse.0.is_finished() {
+            #[derive(Default)]
+            struct TmpParticles3dTemplate(HandleTemplate<ParticlesAsset>);
+            impl Template for TmpParticles3dTemplate {
+                type Output = Particles3d;
+                fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
+                    Ok(Particles3d(self.0.build_template(context)?))
+                }
+                fn clone_template(&self) -> Self {
+                    Self(self.0.clone_template())
+                }
+            }
             commands.spawn_scene(bsn! {
-                Particles3d(asset_value(ParticlesAsset::new(
+                template_value(TmpParticles3dTemplate(asset_value(ParticlesAsset::new(
                     "Explosion".into(),
                     ParticlesDimension::D3,
                     default(),
@@ -77,9 +90,8 @@ pub(super) fn fuse(
                     vec![],
                     true,
                     default(),
-                )))
+                ))))
             });
-            commands.spawn((Particles3d(particles.add()), transform.clone()));
             commands.entity(entity).despawn();
         }
     }
@@ -89,13 +101,8 @@ pub fn primed_tnt() -> impl Scene {
     bsn! {
         actor()
         { PhysicsPreset::MiscActor.physics(false) }
+        Collider::cuboid(1.0, 1.0, 1.0)
         Fuse
-        WorldAssetRoot({
-            actor_scene(
-                &MODEL_KEY,
-                GltfElementId::Default,
-            )
-        })
-        //{ Collider::cuboid(1.0, 1.0, 1.0) }
+        actor_scene(&MODEL_KEY, GltfElementId::Default)
     }
 }

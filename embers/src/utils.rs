@@ -1,5 +1,6 @@
 pub mod physics;
 
+use bevy::asset::AssetPath;
 use bevy::ecs::template::TemplateContext;
 use bevy::prelude::*;
 use derive_where::derive_where;
@@ -8,7 +9,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::any::type_name;
 use std::fmt;
 use std::marker::PhantomData;
-use std::path::{Component as PathComponent, Path};
+use std::path::Path;
 use std::result::Result;
 use std::str::FromStr;
 use std::sync::LazyLock;
@@ -58,22 +59,22 @@ pub trait Marker: Clone + Send + Sync + 'static {}
 
 impl<T: Clone + Send + Sync + 'static> Marker for T {}
 
-pub trait UntypedPartialCmp<Lhs, Rhs = Lhs> {
-    fn eq(&self, lhs: Lhs, rhs: Rhs) -> bool;
+pub trait DynPartialCmp<Lhs, Rhs = Lhs> {
+    fn dyn_eq(&self, lhs: Lhs, rhs: Rhs) -> bool;
     #[inline]
-    fn ne(&self, lhs: Lhs, rhs: Rhs) -> bool {
-        !self.eq(lhs, rhs)
+    fn dyn_ne(&self, lhs: Lhs, rhs: Rhs) -> bool {
+        !self.dyn_eq(lhs, rhs)
     }
 }
 
-pub trait UntypedCmp<T>: UntypedPartialCmp<T, T> {}
+pub trait DynCmp<T>: DynPartialCmp<T, T> {}
 
 pub trait Named {
     fn name(&self) -> &str;
 }
 
 pub trait UniquelyIdentified {
-    fn unique_id(&self) -> &Uuid;
+    fn unique_id(&self) -> Uuid;
 }
 
 pub trait Namespaced {
@@ -273,31 +274,38 @@ impl FromStr for NamespacedKey {
     }
 }
 
+impl From<&NamespacedKey> for AssetPath<'static> {
+    fn from(value: &NamespacedKey) -> Self {
+        Self::from(value.path_string())
+    }
+}
+
 pub fn path_to_unix_components<P: AsRef<Path>>(path: P) -> String {
+    use std::path::Component;
     let mut result = String::new();
     for component in path.as_ref().components() {
         match component {
-            PathComponent::Prefix(prefix) => {
+            Component::Prefix(prefix) => {
                 result.push_str(&prefix.as_os_str().to_string_lossy());
             }
-            PathComponent::RootDir => {
+            Component::RootDir => {
                 if !result.ends_with('/') {
                     result.push('/');
                 }
             }
-            PathComponent::CurDir => {
+            Component::CurDir => {
                 if !result.is_empty() && !result.ends_with('/') {
                     result.push('/');
                 }
                 result.push('.');
             }
-            PathComponent::ParentDir => {
+            Component::ParentDir => {
                 if !result.is_empty() && !result.ends_with('/') {
                     result.push('/');
                 }
                 result.push_str("..");
             }
-            PathComponent::Normal(normal) => {
+            Component::Normal(normal) => {
                 if !result.is_empty() && !result.ends_with('/') {
                     result.push('/');
                 }
@@ -307,6 +315,23 @@ pub fn path_to_unix_components<P: AsRef<Path>>(path: P) -> String {
     }
     result
 }
+
+#[derive(
+    Asset,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Event,
+    Hash,
+    Message,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Resource,
+    TypePath,
+)]
+pub enum Void {}
 
 #[derive(Debug, Default)]
 pub struct TextureAtlasManifest {
@@ -347,7 +372,7 @@ impl TextureAtlasManifest {
 
 #[derive_where(Default)]
 pub struct RemoveComponentTemplate<C: Component> {
-    _marker: PhantomData<C>,
+    _marker: PhantomData<fn() -> C>,
 }
 
 impl<C: Component> RemoveComponentTemplate<C> {
@@ -362,11 +387,11 @@ impl<C: Component> RemoveComponentTemplate<C> {
 #[derive(Error)]
 #[error("Component `{}` was removed", type_name::<C>())]
 struct ComponentRemoved<C: Component> {
-    _marker: PhantomData<C>,
+    _marker: PhantomData<fn() -> C>,
 }
 
 impl<C: Component> Template for RemoveComponentTemplate<C> {
-    type Output = C;
+    type Output = Void;
     fn build_template(&self, context: &mut TemplateContext) -> bevy::prelude::Result<Self::Output> {
         context.entity.remove::<C>();
         Err(BevyError::ignore(ComponentRemoved::<C> {

@@ -1,4 +1,3 @@
-use crate::reg::{RegBoxedMut, RegistryError, RegistryInitExt};
 use crate::utils::{Keyed, NamespacedKey};
 use anyhow::Error;
 use bevy::prelude::*;
@@ -88,138 +87,138 @@ impl<T: (Fn(NamespacedKey, Table) -> Result<BlockVoxelModel, Error>) + Send + Sy
 }
 
 pub(super) fn plugin(app: &mut App) {
-    app
-        .init_registry::<BlockCollider>()
-        .init_registry::<BlockModel>()
-        .init_registry_boxed::<dyn BlockColliderTemplate>()
-        .init_registry_boxed::<dyn BlockVoxelModelTemplate>()
-        .add_systems(
-            PreStartup,
-            (|mut block_collider_templates: RegBoxedMut<dyn BlockColliderTemplate>| {
-                (|| {
-                    fn layered_collider(mut layers: u8) -> BlockCollider {
-                        let mut yz = 0;
-                        for _y in 0..8 {
-                            if layers & 1 != 0 {
-                                yz += 0xff;
-                            }
-                            layers >>= 1;
-                            yz <<= 8;
+    /*app
+    .init_registry::<BlockCollider>()
+    .init_registry::<BlockModel>()
+    .init_registry_boxed::<dyn BlockColliderTemplate>()
+    .init_registry_boxed::<dyn BlockVoxelModelTemplate>()
+    .add_systems(
+        PreStartup,
+        (|mut block_collider_templates: RegBoxedMut<dyn BlockColliderTemplate>| {
+            (|| {
+                fn layered_collider(mut layers: u8) -> BlockCollider {
+                    let mut yz = 0;
+                    for _y in 0..8 {
+                        if layers & 1 != 0 {
+                            yz += 0xff;
                         }
-                        BlockCollider([yz; 8])
+                        layers >>= 1;
+                        yz <<= 8;
                     }
-                    block_collider_templates.register(
-                        NamespacedKey::new_embers("empty"),
-                        Box::new(|_config| Ok(BlockCollider([0x0000000000000000; 8]))),
-                    )?;
-                    block_collider_templates.register(
-                        NamespacedKey::new_embers("full"),
-                        Box::new(|_config| Ok(BlockCollider([0xffffffffffffffff; 8]))),
-                    )?;
-                    block_collider_templates.register(
-                        NamespacedKey::new_embers("slab"),
-                        Box::new(|config| {
-                            #[derive(Deserialize)]
-                            struct Slab {
-                                variant: SlabVariant,
-                            }
-                            #[derive(Deserialize)]
-                            #[serde(rename_all = "snake_case")]
-                            enum SlabVariant {
-                                Top,
-                                Bottom,
-                            }
-                            Ok(layered_collider(match Slab::deserialize(config)?.variant {
-                                SlabVariant::Top => 0x0f,
-                                SlabVariant::Bottom => 0xf0,
-                            }))
-                        }),
-                    )?;
-                    block_collider_templates.register(
-                        NamespacedKey::new_embers("layered"),
-                        Box::new(|config| {
-                            #[derive(Deserialize)]
-                            struct Layered {
-                                layers: u8,
-                            }
-                            Ok(layered_collider(Layered::deserialize(config)?.layers))
-                        }),
-                    )?;
-                    block_collider_templates.register(
-                        NamespacedKey::new_embers("custom"),
-                        Box::new(|config| {
-                            #[derive(Deserialize)]
-                            struct Custom {
-                                data: [u64; 8],
-                            }
-                            Ok(BlockCollider(Custom::deserialize(config)?.data))
-                        }),
-                    )?;
-                    Ok::<(), RegistryError>(())
-                })()
-                .expect("Failed to register block collider templates")
-            },
-             |asset_server: Res<AssetServer>, mut block_voxel_model_templates: RegBoxedMut<dyn BlockVoxelModelTemplate>| {
-                (|| {
-                    block_voxel_model_templates.register(
-                        NamespacedKey::new_embers("empty"),
-                        Box::new(|_key, _config| Ok(BlockVoxelModel { voxels: 0b00000000 })),
-                    )?;
-                    block_voxel_model_templates.register(
-                        NamespacedKey::new_embers("cube"),
-                        Box::new(|_key, config| {
-                            #[derive(Deserialize)]
-                            struct Cube {
-                                textures: Textures,
-                            }
-                            #[derive(Deserialize)]
-                            struct Textures {
-                                down: NamespacedKey,
-                                up: NamespacedKey,
-                                north: NamespacedKey,
-                                south: NamespacedKey,
-                                west: NamespacedKey,
-                                east: NamespacedKey,
-                            }
-                            let model = Cube::deserialize(config)?;
-                            Ok(BlockVoxelModel { voxels: 0b11111111 })
-                        }),
-                    )?;
-                    block_voxel_model_templates.register(
-                        NamespacedKey::new_embers("cube_all"),
-                        Box::new(|_key, config| {
-                            #[derive(Deserialize)]
-                            struct CubeAll {
-                                textures: Textures,
-                            }
-                            #[derive(Deserialize)]
-                            struct Textures {
-                                all: NamespacedKey,
-                            }
-                            let model = CubeAll::deserialize(config)?;
-                            Ok(BlockVoxelModel { voxels: 0b11111111 })
-                        }),
-                    )?;
-                    block_voxel_model_templates.register(
-                        NamespacedKey::new_embers("bottom_slab"),
-                        Box::new(|_key, config| {
-                            #[derive(Deserialize)]
-                            struct BottomSlab {
-                                textures: Textures,
-                            }
-                            #[derive(Deserialize)]
-                            struct Textures {
-                                side: NamespacedKey,
-                                top: NamespacedKey,
-                                bottom: NamespacedKey,
-                            }
-                            let model = BottomSlab::deserialize(config)?;
-                            Ok(BlockVoxelModel { voxels: 0b11001100 })
-                        }),
-                    )?;
-                    Ok::<(), RegistryError>(())
-                })()
-                .expect("Failed to register block model voxel templates")
-            },
-            ));
+                    BlockCollider([yz; 8])
+                }
+                block_collider_templates.register(
+                    NamespacedKey::new_embers("empty"),
+                    Box::new(|_config| Ok(BlockCollider([0x0000000000000000; 8]))),
+                )?;
+                block_collider_templates.register(
+                    NamespacedKey::new_embers("full"),
+                    Box::new(|_config| Ok(BlockCollider([0xffffffffffffffff; 8]))),
+                )?;
+                block_collider_templates.register(
+                    NamespacedKey::new_embers("slab"),
+                    Box::new(|config| {
+                        #[derive(Deserialize)]
+                        struct Slab {
+                            variant: SlabVariant,
+                        }
+                        #[derive(Deserialize)]
+                        #[serde(rename_all = "snake_case")]
+                        enum SlabVariant {
+                            Top,
+                            Bottom,
+                        }
+                        Ok(layered_collider(match Slab::deserialize(config)?.variant {
+                            SlabVariant::Top => 0x0f,
+                            SlabVariant::Bottom => 0xf0,
+                        }))
+                    }),
+                )?;
+                block_collider_templates.register(
+                    NamespacedKey::new_embers("layered"),
+                    Box::new(|config| {
+                        #[derive(Deserialize)]
+                        struct Layered {
+                            layers: u8,
+                        }
+                        Ok(layered_collider(Layered::deserialize(config)?.layers))
+                    }),
+                )?;
+                block_collider_templates.register(
+                    NamespacedKey::new_embers("custom"),
+                    Box::new(|config| {
+                        #[derive(Deserialize)]
+                        struct Custom {
+                            data: [u64; 8],
+                        }
+                        Ok(BlockCollider(Custom::deserialize(config)?.data))
+                    }),
+                )?;
+                Ok::<(), RegistryError>(())
+            })()
+            .expect("Failed to register block collider templates")
+        },
+         |asset_server: Res<AssetServer>, mut block_voxel_model_templates: RegBoxedMut<dyn BlockVoxelModelTemplate>| {
+            (|| {
+                block_voxel_model_templates.register(
+                    NamespacedKey::new_embers("empty"),
+                    Box::new(|_key, _config| Ok(BlockVoxelModel { voxels: 0b00000000 })),
+                )?;
+                block_voxel_model_templates.register(
+                    NamespacedKey::new_embers("cube"),
+                    Box::new(|_key, config| {
+                        #[derive(Deserialize)]
+                        struct Cube {
+                            textures: Textures,
+                        }
+                        #[derive(Deserialize)]
+                        struct Textures {
+                            down: NamespacedKey,
+                            up: NamespacedKey,
+                            north: NamespacedKey,
+                            south: NamespacedKey,
+                            west: NamespacedKey,
+                            east: NamespacedKey,
+                        }
+                        let model = Cube::deserialize(config)?;
+                        Ok(BlockVoxelModel { voxels: 0b11111111 })
+                    }),
+                )?;
+                block_voxel_model_templates.register(
+                    NamespacedKey::new_embers("cube_all"),
+                    Box::new(|_key, config| {
+                        #[derive(Deserialize)]
+                        struct CubeAll {
+                            textures: Textures,
+                        }
+                        #[derive(Deserialize)]
+                        struct Textures {
+                            all: NamespacedKey,
+                        }
+                        let model = CubeAll::deserialize(config)?;
+                        Ok(BlockVoxelModel { voxels: 0b11111111 })
+                    }),
+                )?;
+                block_voxel_model_templates.register(
+                    NamespacedKey::new_embers("bottom_slab"),
+                    Box::new(|_key, config| {
+                        #[derive(Deserialize)]
+                        struct BottomSlab {
+                            textures: Textures,
+                        }
+                        #[derive(Deserialize)]
+                        struct Textures {
+                            side: NamespacedKey,
+                            top: NamespacedKey,
+                            bottom: NamespacedKey,
+                        }
+                        let model = BottomSlab::deserialize(config)?;
+                        Ok(BlockVoxelModel { voxels: 0b11001100 })
+                    }),
+                )?;
+                Ok::<(), RegistryError>(())
+            })()
+            .expect("Failed to register block model voxel templates")
+        },
+        ));*/
 }

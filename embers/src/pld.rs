@@ -5,7 +5,7 @@ pub mod meta;
 
 use crate::path;
 use crate::ui::{AnimatedTexture, TextureAnimation, TextureScaling};
-use crate::utils::{Keyed, NamespacedKey, RemoveComponentTemplate};
+use crate::utils::{Keyed, NamespacedKey, RemoveComponentTemplate, UniquelyIdentified};
 use atomicow::CowArc;
 use bevy::app::App;
 use bevy::asset::io::AssetSourceId;
@@ -13,16 +13,90 @@ use bevy::asset::{AssetPath, LoadedFolder, embedded_asset};
 use bevy::ecs::template::{TemplateContext, TemplateTuple};
 use bevy::gltf::{GltfMaterial, GltfMesh, GltfNode, GltfSkin};
 use bevy::prelude::*;
+use delegate::delegate;
 use derive_where::derive_where;
 use std::any::TypeId;
 use std::cmp::PartialEq;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::marker::PhantomData;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
-use uuid::Uuid;
+use uuid::{Uuid, uuid};
+
+#[derive(Asset, Deref, DerefMut)]
+pub struct Boxed<M: TypePath, T: ?Sized + Send + Sync + 'static> {
+    #[deref]
+    pub value: Box<T>,
+    _marker: PhantomData<fn(M) -> M>,
+}
+
+impl<M: TypePath, T: Send + Sync + 'static> From<T> for Boxed<M, T> {
+    #[inline]
+    fn from(value: T) -> Self {
+        Self::new(value)
+    }
+}
+
+impl<M: TypePath, T: ?Sized + Send + Sync + 'static> From<Box<T>> for Boxed<M, T> {
+    #[inline]
+    fn from(value: Box<T>) -> Self {
+        Self::new_boxed(value)
+    }
+}
+
+impl<M: TypePath, T: ?Sized + Send + Sync + 'static> TypePath for Boxed<M, T> {
+    delegate! {
+        to M {
+            fn type_path() -> &'static str;
+            fn short_type_path() -> &'static str;
+            fn type_ident() -> Option<&'static str>;
+            fn crate_name() -> Option<&'static str>;
+            fn module_path() -> Option<&'static str>;
+        }
+    }
+}
+
+impl<M: TypePath, T: Clone + ?Sized + Send + Sync + 'static> Clone for Boxed<M, T> {
+    fn clone(&self) -> Self {
+        Self::new_boxed(self.value.clone())
+    }
+}
+
+impl<M: TypePath, T: UniquelyIdentified + ?Sized + Send + Sync + 'static> UniquelyIdentified
+    for Boxed<M, T>
+{
+    fn unique_id(&self) -> Uuid {
+        self.value.unique_id()
+    }
+}
+
+impl<M: TypePath, T: Keyed + ?Sized + Send + Sync + 'static> Keyed for Boxed<M, T> {
+    fn key(&self) -> &NamespacedKey {
+        self.value.key()
+    }
+}
+
+impl<M: TypePath, T: Send + Sync + 'static> Boxed<M, T> {
+    pub fn new(value: T) -> Self {
+        Self {
+            value: Box::new(value),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<M: TypePath, T: ?Sized + Send + Sync + 'static> Boxed<M, T> {
+    pub fn new_boxed(value: Box<T>) -> Self {
+        Self {
+            value,
+            _marker: PhantomData,
+        }
+    }
+}
+
+pub(crate) static EMBERS_PAYLOAD_SOURCE_UUID: Uuid = uuid!("9e037d1a-048d-4784-8ec1-0655421951b1");
 
 pub trait PayloadPath {
     fn with_added_extension<S: AsRef<OsStr>>(&self, extension: S) -> Self;
@@ -38,6 +112,128 @@ impl PayloadPath for AssetPath<'_> {
             None => path,
         }
     }
+}
+
+pub trait Payloads<A: Asset> {
+    fn inject<'path>(
+        &mut self,
+        injected_payloads: &mut InjectedPayloads,
+        source_uuid: Uuid,
+        path: impl Into<AssetPath<'path>>,
+        payload: A,
+    );
+    fn clear(&mut self);
+}
+
+impl<A: Asset> Payloads<A> for Assets<A> {
+    fn inject<'path>(
+        &mut self,
+        injected_payloads: &mut InjectedPayloads,
+        source_uuid: Uuid,
+        path: impl Into<AssetPath<'path>>,
+        payload: A,
+    ) {
+        let uuid = Uuid::new_v5(
+            &source_uuid,
+            path.into()
+                .with_source(AssetSourceId::Default)
+                .to_string()
+                .as_bytes(),
+        );
+        injected_payloads.source_uuids.insert(uuid, source_uuid);
+        self.insert(uuid, payload).unwrap();
+    }
+    fn clear(&mut self) {
+        for id in self.ids().collect::<Box<[_]>>() {
+            self.remove(id);
+        }
+    }
+}
+
+pub(crate) trait EmbersPayloads<A: Asset>: Payloads<A> {
+    fn inject_embers<'path>(
+        &mut self,
+        injected_payloads: &mut InjectedPayloads,
+        path: impl Into<AssetPath<'path>>,
+        payload: A,
+    );
+}
+
+impl<A: Asset> EmbersPayloads<A> for Assets<A> {
+    #[inline]
+    fn inject_embers<'path>(
+        &mut self,
+        injected_payloads: &mut InjectedPayloads,
+        path: impl Into<AssetPath<'path>>,
+        payload: A,
+    ) {
+        self.inject(injected_payloads, EMBERS_PAYLOAD_SOURCE_UUID, path, payload);
+    }
+}
+
+/// `path_format` is NOT a real format string! Only `{}` is replaced.
+pub fn inject_payload_batch<A: Asset>(
+    path_format: &'static str,
+    source_uuid: Uuid,
+    payload: impl IntoIterator<Item = (impl Keyed, impl Into<A>)> + Send + Sync + 'static,
+) -> impl System<In = (), Out = ()> {
+    let mut payload = Some(payload);
+    IntoSystem::into_system(
+        move |mut injected_payloads: ResMut<InjectedPayloads>, mut assets: ResMut<Assets<A>>| {
+            if let Some(payload) = payload.take() {
+                for (key, asset) in payload.into_iter() {
+                    assets.inject(
+                        &mut injected_payloads,
+                        source_uuid,
+                        path_format.replace("{}", &*key.key().path_string()),
+                        asset.into(),
+                    );
+                }
+            } else {
+                error!("The injection system is called multiple times. Skipping.");
+            }
+        },
+    )
+}
+
+/// See [`inject_payload_batch`]
+#[inline]
+pub fn inject_keyed_payload_batch<A: Asset + Keyed>(
+    path_format: &'static str,
+    source_uuid: Uuid,
+    payload: impl IntoIterator<Item = impl Into<A>, IntoIter: Send + Sync + 'static>,
+) -> impl System<In = (), Out = ()> {
+    inject_payload_batch::<A>(
+        path_format,
+        source_uuid,
+        payload
+            .into_iter()
+            .map(|asset| asset.into())
+            .map(|asset| (asset.key().clone(), asset)),
+    )
+}
+
+/// See [`inject_payload_batch`]
+#[inline]
+pub(crate) fn inject_embers_payload_batch<A: Asset>(
+    path_format: &'static str,
+    payload: impl IntoIterator<Item = (impl Keyed, impl Into<A>)> + Send + Sync + 'static,
+) -> impl System<In = (), Out = ()> {
+    inject_payload_batch(path_format, EMBERS_PAYLOAD_SOURCE_UUID.clone(), payload)
+}
+
+/// See [`inject_payload_batch`]
+#[inline]
+pub(crate) fn inject_keyed_embers_payload_batch<A: Asset + Keyed>(
+    path_format: &'static str,
+    payload: impl IntoIterator<Item = impl Into<A>, IntoIter: Send + Sync + 'static>,
+) -> impl System<In = (), Out = ()> {
+    inject_keyed_payload_batch(path_format, EMBERS_PAYLOAD_SOURCE_UUID.clone(), payload)
+}
+
+#[derive(Default, Resource)]
+pub struct InjectedPayloads {
+    source_uuids: HashMap<Uuid, Uuid>,
 }
 
 #[derive(Default, Resource)]
@@ -56,20 +252,22 @@ fn monitor_folder_loads(
     mut payload_hold: ResMut<PayloadHold>,
 ) {
     for folder_event in folder_events_reader.read() {
-        if let AssetEvent::LoadedWithDependencies { id } = folder_event {
-            let handle = asset_server.get_id_handle(*id).unwrap();
-            if payload_hold.loading_scopes.remove(&handle) {
-                payload_hold.loaded_scopes.insert(handle);
-                if payload_hold.loading_scopes.is_empty() {
-                    commands.trigger(PayloadFetchingComplete);
-                }
+        let AssetEvent::LoadedWithDependencies { id } = folder_event else {
+            continue;
+        };
+        let handle = asset_server.get_id_handle(*id).unwrap();
+        if payload_hold.loading_scopes.remove(&handle) {
+            payload_hold.loaded_scopes.insert(handle);
+            if payload_hold.loading_scopes.is_empty() {
+                commands.trigger(PayloadFetchingComplete);
             }
         }
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub enum PayloadScopeId {
+    #[default]
     Global,
     Dimension(NamespacedKey),
 }
@@ -77,8 +275,10 @@ pub enum PayloadScopeId {
 impl PayloadScopeId {
     fn build<'src_id>(&self, source: impl Into<AssetSourceId<'src_id>>) -> PayloadScope {
         match self {
-            Self::Global => PayloadScope::new(source, "global"),
-            Self::Dimension(key) => PayloadScope::new(source, format!("dim/{}", key.path_string())),
+            Self::Global => PayloadScope::new(AssetPath::from("global").with_source(source)),
+            Self::Dimension(key) => PayloadScope::new(
+                AssetPath::from(format!("dim/{}", key.path_string())).with_source(source),
+            ),
         }
     }
 }
@@ -86,33 +286,55 @@ impl PayloadScopeId {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PayloadScope {
     root: AssetPath<'static>,
-    fonts_root: AssetPath<'static>,
-    models_root: AssetPath<'static>,
-    textures_root: AssetPath<'static>,
 }
 
 impl PayloadScope {
-    pub fn new<'src_id, 'path>(
-        source: impl Into<AssetSourceId<'src_id>>,
-        root: impl Into<AssetPath<'path>>,
-    ) -> Self {
-        let root = root
-            .into()
-            .into_owned()
-            .with_source(source.into().into_owned());
+    pub fn new<'path>(root: impl Into<AssetPath<'path>>) -> Self {
         Self {
-            fonts_root: root.resolve_str("fonts").unwrap(),
-            models_root: root.resolve_str("models").unwrap(),
-            textures_root: root.resolve_str("textures").unwrap(),
-            root,
+            root: root.into().into_owned(),
         }
     }
+}
+
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+pub struct PayloadSourceId {
+    asset_source_id: AssetSourceId<'static>,
+    uuid: Uuid,
+}
+
+impl UniquelyIdentified for PayloadSourceId {
+    fn unique_id(&self) -> Uuid {
+        self.uuid
+    }
+}
+
+impl PayloadSourceId {
+    pub fn new<'src_id>(
+        asset_source_id: impl Into<AssetSourceId<'src_id>>,
+        uuid: &impl UniquelyIdentified,
+    ) -> Self {
+        Self {
+            asset_source_id: asset_source_id.into().into_owned(),
+            uuid: uuid.unique_id().clone(),
+        }
+    }
+    pub(crate) fn new_embers() -> Self {
+        Self {
+            asset_source_id: AssetSourceId::Default,
+            uuid: EMBERS_PAYLOAD_SOURCE_UUID.clone(),
+        }
+    }
+}
+
+struct PayloadSource {
+    id: PayloadSourceId,
+    scopes: Vec<PayloadScope>, // TODO optimize memory layout
 }
 
 #[derive(Resource)]
 pub struct PayloadManager {
     scope_ids: Vec<PayloadScopeId>,
-    sources: Vec<(Vec<PayloadScope>, AssetSourceId<'static>)>, // TODO optimize memory layout
+    sources: Vec<PayloadSource>,
 }
 
 impl PayloadManager {
@@ -141,12 +363,12 @@ fn handle_fetch_scope_request(
 ) {
     let FetchPayloadScopeRequest(scope_id) = &*request;
     payload_manager.scope_ids.push(scope_id.clone());
-    for (scopes, source_id) in &mut payload_manager.sources {
-        let scope = scope_id.build(source_id.clone());
+    for source in &mut payload_manager.sources {
+        let scope = scope_id.build(source.id.asset_source_id.clone());
         payload_hold
             .loading_scopes
             .insert(asset_server.load_folder(&scope.root));
-        scopes.push(scope);
+        source.scopes.push(scope);
     }
 }
 
@@ -174,21 +396,21 @@ fn handle_evict_scope_request(
         "Only the topmost scope may be evicted."
     );
     payload_manager.scope_ids.pop();
-    for (scopes, _source_id) in &mut payload_manager.sources {
+    for source in &mut payload_manager.sources {
         payload_hold.loaded_scopes.remove(
             &asset_server
-                .get_handle(&scopes.pop().unwrap().root)
+                .get_handle(&source.scopes.pop().unwrap().root)
                 .unwrap(),
         );
     }
 }
 
 #[derive(Event)]
-pub struct MountPayloadSourceRequest(AssetSourceId<'static>);
+pub struct MountPayloadSourceRequest(PayloadSourceId);
 
 impl MountPayloadSourceRequest {
-    pub fn new<'src_id>(source_id: impl Into<AssetSourceId<'src_id>>) -> Self {
-        Self(source_id.into().into_owned())
+    pub fn new(source_id: PayloadSourceId) -> Self {
+        Self(source_id)
     }
 }
 
@@ -200,26 +422,26 @@ fn handle_mount_source_request(
 ) {
     let MountPayloadSourceRequest(source_id) = &*request;
     let PayloadManager { scope_ids, sources } = &mut *payload_manager;
-    sources.push((
-        scope_ids
+    sources.push(PayloadSource {
+        id: source_id.clone(),
+        scopes: scope_ids
             .iter()
-            .map(|scope_id| scope_id.build(source_id.clone()))
+            .map(|scope_id| scope_id.build(source_id.asset_source_id.clone()))
             .inspect(|scope| {
                 payload_hold
                     .loading_scopes
                     .insert(asset_server.load_folder(&scope.root));
             })
             .collect(),
-        source_id.clone(),
-    ));
+    });
 }
 
 #[derive(Event)]
-pub struct UnmountPayloadSourceRequest(AssetSourceId<'static>);
+pub struct UnmountPayloadSourceRequest(PayloadSourceId);
 
 impl UnmountPayloadSourceRequest {
-    pub fn new<'src_id>(source_id: impl Into<AssetSourceId<'src_id>>) -> Self {
-        Self(source_id.into().into_owned())
+    pub fn new(source_id: PayloadSourceId) -> Self {
+        Self(source_id)
     }
 }
 
@@ -233,18 +455,17 @@ fn handle_unmount_source_request(
     match payload_manager
         .sources
         .iter()
-        .position(|(_scopes, id)| source_id == id)
+        .position(|PayloadSource { id, .. }| source_id == id)
     {
         Some(index) => {
-            let (scopes, _source_id) = payload_manager.sources.remove(index);
-            for scope in scopes {
+            for scope in payload_manager.sources.remove(index).scopes {
                 payload_hold
                     .loaded_scopes
                     .remove(&asset_server.get_handle(scope.root).unwrap());
             }
         }
         None => error!(
-            "The specified source could not be unloaded because it is not loaded: {}",
+            "The specified source could not be unloaded because it is not loaded: {:?}",
             source_id
         ),
     }
@@ -266,34 +487,93 @@ fn handle_reload_request(
     } = &mut *payload_hold;
     loading_scopes.extend(loaded_scopes.drain());
     for source in &payload_manager.sources {
-        for scope in &source.0 {
+        for scope in &source.scopes {
             asset_server.reload(scope.root.clone());
         }
     }
 }
 
-fn resolve<'path, A: Asset>(
+#[inline]
+pub fn resolve_handle<'path, A: Asset>(
     payload_manager: &PayloadManager,
     asset_server: &AssetServer,
     assets: &Assets<A>,
     path: impl Into<AssetPath<'path>>,
 ) -> Option<Handle<A>> {
+    resolve_source_handle(payload_manager, asset_server, assets, path)
+        .unzip()
+        .1
+}
+
+pub fn resolve_source_handle<'path, A: Asset>(
+    payload_manager: &PayloadManager,
+    asset_server: &AssetServer,
+    assets: &Assets<A>,
+    path: impl Into<AssetPath<'path>>,
+) -> Option<(PayloadSourceId, Handle<A>)> {
     let path = path.into();
-    for (scopes, _source_id) in payload_manager.sources.iter().rev() {
-        for scope in scopes.iter().rev() {
+    for source in payload_manager.sources.iter().rev() {
+        for scope in source.scopes.iter().rev() {
             if let Some(handle) = asset_server.get_handle(scope.root.resolve(&path)) {
-                return Some(handle);
+                return Some((source.id.clone(), handle));
             }
         }
-    }
-    let uuid = Uuid::new_v5(
-        &Uuid::new_v5(&Uuid::NAMESPACE_URL, A::type_path().as_bytes()),
-        path.to_string().as_bytes(),
-    );
-    if assets.contains(uuid.clone()) {
-        return Some(Handle::Uuid(uuid, PhantomData));
+        let uuid = Uuid::new_v5(&source.id.uuid, path.to_string().as_bytes());
+        if assets.contains(uuid.clone()) {
+            return Some((source.id.clone(), Handle::Uuid(uuid, PhantomData)));
+        }
     }
     None
+}
+
+#[inline]
+pub fn resolve_payload<'path, 'pld, A: Asset>(
+    payload_manager: &PayloadManager,
+    asset_server: &AssetServer,
+    assets: &'pld Assets<A>,
+    path: impl Into<AssetPath<'path>>,
+) -> Option<&'pld A> {
+    resolve_handle(payload_manager, asset_server, assets, path)
+        .map(|handle| assets.get(&handle).unwrap())
+}
+
+#[inline]
+pub fn resolve_source_payload<'path, 'pld, A: Asset>(
+    payload_manager: &PayloadManager,
+    asset_server: &AssetServer,
+    assets: &'pld Assets<A>,
+    path: impl Into<AssetPath<'path>>,
+) -> Option<(PayloadSourceId, &'pld A)> {
+    resolve_source_handle(payload_manager, asset_server, assets, path)
+        .map(|(source, handle)| (source, assets.get(&handle).unwrap()))
+}
+
+fn scan_source_uuid<A: Asset>(
+    injected_payloads: &InjectedPayloads,
+    payload_manager: &PayloadManager,
+    asset_server: &AssetServer,
+    id: impl Into<AssetId<A>>,
+) -> Option<Uuid> {
+    let id = id.into();
+    match id {
+        AssetId::Index { .. } => asset_server
+            .get_id_handle(id)
+            .and_then(|handle| handle.path().cloned())
+            .and_then(|path| {
+                for source in payload_manager.sources.iter().rev() {
+                    if *path.source() != source.id.asset_source_id {
+                        continue;
+                    }
+                    for scope in source.scopes.iter().rev() {
+                        if path.path().starts_with(scope.root.path()) {
+                            return Some(source.id.uuid);
+                        }
+                    }
+                }
+                None
+            }),
+        AssetId::Uuid { uuid } => injected_payloads.source_uuids.get(&uuid).copied(),
+    }
 }
 
 #[inline]
@@ -337,8 +617,14 @@ impl<A: Asset> From<AssetPath<'_>> for PayloadTemplate<A> {
 }
 
 impl<A: Asset> PayloadTemplate<A> {
-    pub fn value(value: A) -> Self {
-        Self::Value(Arc::new(Mutex::new(Ok(Some(value)))))
+    pub fn handle(value: impl Into<Handle<A>>) -> Self {
+        Self::Handle(value.into())
+    }
+    pub fn path<'path>(value: impl Into<AssetPath<'path>>) -> Self {
+        Self::Path(value.into().into_owned())
+    }
+    pub fn value(value: impl Into<A>) -> Self {
+        Self::Value(Arc::new(Mutex::new(Ok(Some(value.into())))))
     }
 }
 
@@ -353,7 +639,7 @@ impl<A: Asset> Template for PayloadTemplate<A> {
     fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
         match self {
             Self::Handle(handle) => Ok(handle.clone()),
-            Self::Path(path) => resolve(
+            Self::Path(path) => resolve_handle(
                 context.entity.resource::<PayloadManager>(),
                 context.entity.resource::<AssetServer>(),
                 context.entity.resource::<Assets<A>>(),
@@ -549,7 +835,7 @@ impl GltfElement for AnimationClip {
 pub struct GltfElementTemplate<E: GltfElement> {
     model: PayloadTemplate<Gltf>,
     id: GltfElementId<'static>,
-    _marker: PhantomData<E>,
+    _marker: PhantomData<fn() -> E>,
 }
 
 #[derive(Debug, Error)]
@@ -656,15 +942,21 @@ impl Template for WorldAssetRootTemplate {
 }
 
 #[inline]
-pub fn default_scene() -> GltfElementTemplate<WorldAsset> {
+pub fn default_scene() -> impl Scene {
     // TODO use embedded bsn when bsn reader comes out
-    model_element("missingno", GltfElementId::Default)
+    bsn! {
+        template_value(WorldAssetRootTemplate {
+            scene: model_element("missingno", GltfElementId::Default),
+        })
+    }
 }
 
 #[inline]
-pub fn actor_scene(key: &NamespacedKey, id: GltfElementId) -> WorldAssetRootTemplate {
-    WorldAssetRootTemplate {
-        scene: model_element(format!("actors/{}", key.path_string()), id),
+pub fn actor_scene(key: &NamespacedKey, id: GltfElementId) -> impl Scene {
+    bsn! {
+        template_value(WorldAssetRootTemplate {
+            scene: model_element(format!("actors/{}", key.path_string()), id),
+        })
     }
 }
 
@@ -779,7 +1071,7 @@ fn image_node<'path>(path: impl Into<AssetPath<'path>>) -> impl Scene {
     let TemplateTuple((image, atlas, animation, scaling)) = rich_image(path);
     bsn! {
         template_value(ImageNodeTemplate { image, atlas, scaling })
-        template_value(TextureAnimationTemplate { animation })
+        //template_value(TextureAnimationTemplate { animation })
     }
 }
 
@@ -813,7 +1105,8 @@ pub fn fallback<A: Asset>(asset_server: &AssetServer) -> Option<Handle<A>> {
 pub(super) fn plugin(app: &mut App) {
     embedded_asset!(app, path!("icon.png"));
     embedded_asset!(app, path!("missingno.png"));
-    app.init_resource::<PayloadHold>()
+    app.init_resource::<InjectedPayloads>()
+        .init_resource::<PayloadHold>()
         .insert_resource(PayloadManager::new())
         .add_systems(Update, monitor_folder_loads)
         .add_observer(handle_fetch_scope_request)

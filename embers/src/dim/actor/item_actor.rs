@@ -1,18 +1,22 @@
 use crate::dim::actor::actor;
 use crate::dim::{Interactable, PhysicsPreset};
-use crate::pld::{PayloadManager, default_scene};
-use crate::utils::NamespacedKey;
+use crate::pld::default_scene;
+use crate::utils::{NamespacedKey, Void};
 use avian3d::prelude::*;
 use bevy::ecs::relationship::Relationship;
 use bevy::ecs::spawn::SpawnableList;
 use bevy::prelude::*;
 use bevy::ptr::{MovingPtr, deconstruct_moving_ptr};
 use std::sync::LazyLock;
+use thiserror::Error;
 
 pub static KEY: LazyLock<NamespacedKey> = LazyLock::new(|| NamespacedKey::new_embers("item"));
 
 pub static INTERACTION_PICKUP: LazyLock<NamespacedKey> =
     LazyLock::new(|| NamespacedKey::new_embers("item_actor/pickup"));
+
+// TODO rework items
+// TODO Apply item component prototypes when item is spawned
 
 #[derive(Component)]
 struct SpawnItem<C: Bundle>(C);
@@ -32,48 +36,47 @@ impl<R: Relationship, C: Bundle> SpawnableList<R> for SpawnItem<C> {
     }
 }
 
-#[derive(Component, Debug)]
+#[derive(Clone, Component, Copy, Debug)]
 pub struct ItemActor(pub Entity);
 
+impl Default for ItemActor {
+    fn default() -> Self {
+        Self(Entity::PLACEHOLDER)
+    }
+}
+
 #[inline]
-fn item_actor(
-    payload_manager: &PayloadManager,
-    asset_server: &AssetServer,
-    models: &Assets<Gltf>,
-) -> impl Bundle {
-    (
-        actor(),
-        PhysicsPreset::Phantom.physics(true),
-        Collider::cuboid(0.25, 0.25, 0.25),
-        SceneRoot(default_scene(payload_manager, asset_server, models)),
+fn item_actor() -> impl Scene {
+    bsn! {
+        actor()
+        { PhysicsPreset::Phantom.physics(true) }
+        Collider::cuboid(0.25, 0.25, 0.25)
+        default_scene()
         Interactable {
             distance_factor: 1.,
-            initial_click: Some(INTERACTION_PICKUP.clone()),
+            initial_click: { Some(INTERACTION_PICKUP.clone()) },
             initial_double_click: None,
-        },
-    )
+        }
+    }
 }
 
-pub fn item_actor_for(
-    payload_manager: &PayloadManager,
-    asset_server: &AssetServer,
-    models: &Assets<Gltf>,
-    item: Entity,
-) -> impl Bundle {
-    (
-        item_actor(payload_manager, asset_server, models),
-        ItemActor(item),
-    )
+pub fn item_actor_for(item: Entity) -> impl Scene {
+    bsn! {
+        item_actor()
+        ItemActor(item)
+    }
 }
 
-pub fn item_actor_of(
-    payload_manager: &PayloadManager,
-    asset_server: &AssetServer,
-    models: &Assets<Gltf>,
-    item: impl Bundle,
-) -> impl Bundle {
-    (
-        item_actor(payload_manager, asset_server, models),
-        Children::spawn(SpawnItem(item)),
-    )
+#[derive(Debug, Error)]
+#[error("")]
+struct TmpError;
+
+pub fn item_actor_of(item: impl Bundle + Clone) -> impl Scene {
+    bsn! {
+        item_actor()
+        template(move |context| {
+            context.entity.insert(Children::spawn(SpawnItem(item.clone())));
+            Err::<Void, BevyError>(BevyError::ignore(TmpError))
+        })
+    }
 }

@@ -85,21 +85,19 @@ fn resize_camera(
 
 fn update_player_camera(
     player: Single<&Transform, With<Player>>,
-    camera: Option<Single<(&mut Transform, &PlayerCamera), (With<PlayerCamera>, Without<Player>)>>,
+    mut camera: Single<(&mut Transform, &PlayerCamera), (With<PlayerCamera>, Without<Player>)>,
 ) {
-    if let Some(mut camera) = camera {
-        let (camera_transform, config) = camera.deref_mut();
-        match config {
-            PlayerCamera::Isometric {
-                distance,
-                height,
-                angle,
-            } => {
-                let player_pos = player.translation;
-                camera_transform.translation =
-                    player_pos + Vec3::new(distance * angle.cos(), *height, distance * angle.sin());
-                camera_transform.look_at(player_pos, Vec3::Y);
-            }
+    let (camera_transform, config) = &mut *camera;
+    match config {
+        PlayerCamera::Isometric {
+            distance,
+            height,
+            angle,
+        } => {
+            let player_pos = player.translation;
+            camera_transform.translation =
+                player_pos + Vec3::new(distance * angle.cos(), *height, distance * angle.sin());
+            camera_transform.look_at(player_pos, Vec3::Y);
         }
     }
 }

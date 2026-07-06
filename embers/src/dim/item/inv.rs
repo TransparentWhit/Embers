@@ -1,6 +1,5 @@
-use super::{ItemComponent, ItemStack, MaxStackSize, StackCount};
+use super::{BoxedItemComponent, ItemStack, MaxStackSize, StackCount};
 use crate::dim::actor::item_actor::ItemActor;
-use crate::reg::{OrRegistry, Registry, RegistryBoxed};
 use crate::utils::Marker;
 use bevy::prelude::*;
 use std::any::type_name;
@@ -97,23 +96,21 @@ fn try_stack(
 ) -> ItemStackResult {
     let source_ref = world.entity(source);
     let target_ref = world.entity(target);
-    let item_key = match source_ref
+    match source_ref
         .get::<ItemStack>()
         .zip(target_ref.get::<ItemStack>())
     {
         Some((source, target)) => {
-            if source == target {
-                &source.0
-            } else {
+            if source != target {
                 return ItemStackResult::NotStackable;
             }
         }
         None => return ItemStackResult::NotStackable,
     };
     if world
-        .resource::<RegistryBoxed<dyn ItemComponent>>()
-        .values()
-        .any(|item_component| item_component.ne(source_ref, target_ref))
+        .resource::<Assets<BoxedItemComponent>>()
+        .iter()
+        .any(|(_id, item_component)| item_component.dyn_ne(source_ref, target_ref))
     {
         return ItemStackResult::NotStackable;
     }
@@ -127,8 +124,7 @@ fn try_stack(
     .min(
         target_ref
             .get::<MaxStackSize>()
-            .cloned()
-            .or_registry(world.resource::<Registry<MaxStackSize>>(), item_key)
+            .copied()
             .unwrap_or_default()
             .0
             .saturating_sub(target_count),
@@ -379,6 +375,7 @@ impl<'world, 'state> MoveItemCommandExt for Commands<'world, 'state> {
 impl<const SRC_N: usize, SrcM: Marker, const DST_N: usize, DstM: Marker> Command
     for MoveItemCommand<SRC_N, SrcM, DST_N, DstM>
 {
+    type Out = ();
     fn apply(self, world: &mut World) {
         if let Err(err) = self.source.verify_existence(world) {
             warn!("Could not move item from entity: {}", err);

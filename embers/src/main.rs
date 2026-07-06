@@ -3,7 +3,6 @@
 pub mod dim;
 pub mod input;
 pub mod pld;
-pub mod reg;
 pub mod ui;
 pub mod utils;
 
@@ -27,7 +26,7 @@ use ui::loading_screen::{Load, MainMenuEntryContext};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[derive(Debug, Resource)]
+#[derive(Debug, Reflect, Resource)]
 struct Options {}
 
 pub static UNPROCESSED_ASSETS_ROOT: OnceLock<PathBuf> = OnceLock::new();

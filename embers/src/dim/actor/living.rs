@@ -3,60 +3,81 @@ pub mod creeper;
 pub mod dummy;
 pub mod player;
 
-use super::super::PhysicsPreset;
 use super::actor;
-use crate::dim::Movements;
-use crate::dim::actor::living::attributes::AttributeInstance;
-use crate::reg::{Registry, RegistryInitExt};
+use crate::dim::{Movements, MovementsConfig, PhysicsPreset};
+use crate::pld::PayloadTemplate;
 use crate::utils::NamespacedKey;
+use attributes::{Attributes, AttributesTemplate, MaxHealth};
+use bevy::ecs::template::TemplateContext;
 use bevy::prelude::*;
 use bevy_tnua::prelude::*;
-use std::collections::HashMap;
-use std::marker::PhantomData;
-use uuid::Uuid;
 
-#[derive(Component, Debug)]
-pub struct Health(pub f32);
+#[derive(Component, Debug, Default)]
+pub struct LivingActor;
 
-#[derive(Component, Debug)]
-pub struct Attributes(pub HashMap<NamespacedKey, AttributeInstance>);
+#[derive(Default)]
+struct MovementConfigTemplate {
+    config: PayloadTemplate<MovementsConfig>,
+}
 
-pub struct AttributeBase(HashMap<NamespacedKey, f32>);
-
-impl AttributeBase {
-    pub fn new(base: HashMap<NamespacedKey, f32>) -> Self {
-        Self(base)
+impl Template for MovementConfigTemplate {
+    type Output = TnuaConfig<Movements>;
+    fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
+        Ok(TnuaConfig(self.config.build_template(context)?))
+    }
+    fn clone_template(&self) -> Self {
+        Self {
+            config: self.config.clone_template(),
+        }
     }
 }
 
-pub fn living_actor(
-    key: &NamespacedKey,
-    uuid: &Uuid,
-    attribute_bases: &Registry<AttributeBase>,
-    interactable: bool,
-) -> impl Bundle {
-    let attributes: HashMap<NamespacedKey, AttributeInstance> = attribute_bases
-        .get(key)
-        .expect("Attribute base not found")
-        .0
-        .iter()
-        .map(|(key, base)| (key.clone(), AttributeInstance::new(key.clone(), *base)))
-        .collect();
-    (
-        actor(),
-        PhysicsPreset::LivingActor.physics(interactable),
-        Health(
-            attributes
-                .get(&attributes::embers::MAX_HEALTH)
-                .map(|attribute_instance| attribute_instance.value())
-                .unwrap_or(0.),
-        ),
-        Attributes(attributes),
-        TnuaController::<Movements>::default(),
-        TnuaConfig::<Movements>(Handle::Uuid(uuid.clone(), PhantomData)),
-    )
+impl MovementConfigTemplate {
+    fn new(actor_key: &NamespacedKey) -> Self {
+        Self {
+            config: PayloadTemplate::path(format!("movement_configs/{}", actor_key.path_string())),
+        }
+    }
+}
+
+#[derive(Component, Debug)]
+#[require(LivingActor)]
+pub struct Health(pub f32);
+
+impl FromTemplate for Health {
+    type Template = HealthTemplate;
+}
+
+#[derive(Default)]
+pub struct HealthTemplate;
+
+impl Template for HealthTemplate {
+    type Output = Health;
+    fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
+        Ok(Health(
+            context
+                .entity
+                .get::<Attributes<MaxHealth>>()
+                .unwrap()
+                .value(),
+        ))
+    }
+    fn clone_template(&self) -> Self {
+        Self
+    }
+}
+
+pub fn living_actor(key: &NamespacedKey, interactable: bool) -> impl Scene {
+    bsn! {
+        actor()
+        { PhysicsPreset::LivingActor.physics(interactable) }
+        template_value(AttributesTemplate::new(key.clone()))
+        Health
+        template(|_| Ok(TnuaController::<Movements>::default()))
+        template_value(MovementConfigTemplate::new(key))
+    }
 }
 
 pub(super) fn plugin(app: &mut App) {
-    app.init_registry::<AttributeBase>();
+    app.add_plugins(attributes::plugin);
 }

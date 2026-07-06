@@ -1,12 +1,14 @@
-use super::{PayloadManager, PayloadScope, block_texture};
+use super::{
+    InjectedPayloads, PayloadManager, Payloads, block_texture, resolve_payload, scan_source_uuid,
+};
 use crate::dim::MovementsConfig;
-use crate::dim::actor::MOVEMENT_CONFIG_NAMESPACE;
-use crate::dim::actor::living::AttributeBase;
+use crate::dim::actor::living::attributes::AttributeBase;
 use crate::dim::block::{
     BlockCollider, BlockColliderTemplate, BlockModel, BlockVoxelModelTemplate,
 };
-use crate::dim::item::{ItemAction, ItemActionTemplate, ItemComponent};
-use crate::reg::{RegBoxed, RegMut, RegistryBoxed};
+use crate::dim::item::{
+    BoxedItemActionBuilder, BoxedItemComponent, ItemAction, ItemActionBuilder, ItemComponent,
+};
 use crate::ui::{TextureAnimation, TextureScaling};
 use crate::utils::{NamespacedKey, TextureAtlasManifest, path_to_unix_components};
 use anyhow::Error;
@@ -21,7 +23,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::LazyLock;
-use toml::{Table, from_slice};
+use toml::{Table, Value, from_slice};
 use uuid::Uuid;
 
 static ACTOR_BASE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
@@ -189,17 +191,33 @@ fn reload_metadata_plugin(app: &mut App) {
     fn process_meta<D: SystemInput + 'static, M: Asset, P: SystemParam + 'static>(
         path_pattern: &'static Regex,
         r#type: &'static str,
-        parse: fn(NamespacedKey, &M, &mut P::Item<'_, '_>, &mut D::Inner<'_>),
+        parse: fn(
+            &mut InjectedPayloads,
+            Uuid,
+            NamespacedKey,
+            &M,
+            &mut P::Item<'_, '_>,
+            &mut D::Inner<'_>,
+        ),
     ) -> impl System<In = In<StaticSystemInput<'static, D>>, Out = D::Inner<'static>> {
         IntoSystem::into_system(
             move |In(StaticSystemInput(mut data)): In<StaticSystemInput<'static, D>>,
+                  mut injected_payloads: ResMut<InjectedPayloads>,
+                  payload_manager: Res<PayloadManager>,
                   asset_server: Res<AssetServer>,
                   metadata: Res<Assets<M>>,
                   extra: StaticSystemParam<P>| {
                 let mut extra = extra.into_inner();
                 for (id, meta) in metadata.iter() {
+                    let Some(source_uuid) =
+                        scan_source_uuid(&injected_payloads, &payload_manager, &asset_server, id)
+                    else {
+                        continue;
+                    };
                     let path = path_to_unix_components(asset_server.get_path(id).unwrap().path());
                     parse(
+                        &mut injected_payloads,
+                        source_uuid,
                         match path_pattern.captures(&path) {
                             Some(captures) => NamespacedKey::new(
                                 captures.name("namespace").unwrap().as_str(),
@@ -222,38 +240,46 @@ fn reload_metadata_plugin(app: &mut App) {
     }
     app.add_observer(
         (|_on_reload_metadata: On<ReloadMetadataRequest>,
-          mut attribute_bases: RegMut<AttributeBase>| {
+          mut movements_configs: ResMut<Assets<MovementsConfig>>,
+          mut attribute_bases: ResMut<Assets<AttributeBase>>| {
+            movements_configs.clear();
             attribute_bases.clear();
             StaticSystemInput(())
         })
         .pipe(process_meta::<
             (),
             ActorBase,
-            (ResMut<Assets<MovementsConfig>>, RegMut<AttributeBase>),
+            (
+                ResMut<Assets<MovementsConfig>>,
+                ResMut<Assets<AttributeBase>>,
+            ),
         >(
             &ACTOR_BASE_PATTERN,
             "actor_base",
-            |key, base, (movements, attribute_bases), ()| {
-                movements
-                    .insert(
-                        Uuid::new_v5(&MOVEMENT_CONFIG_NAMESPACE, key.to_string().as_bytes()),
-                        MovementsConfig {
-                            basis: TnuaBuiltinWalkConfig {
-                                float_height: base.float_height,
-                                ..default()
-                            },
-                            sneak: default(),
-                            roll: default(),
+            |injected_payloads, source_uuid, key, base, (movements, attribute_bases), ()| {
+                movements.inject(
+                    injected_payloads,
+                    source_uuid,
+                    format!("movement_configs/{}", key.path_string()),
+                    MovementsConfig {
+                        basis: TnuaBuiltinWalkConfig {
+                            float_height: base.float_height,
+                            ..default()
                         },
-                    )
-                    .expect("Failed to register movement configuration");
-                attribute_bases
-                    .register(key, AttributeBase::new(base.attributes.clone()))
-                    .expect("Failed to register attribute bases");
+                        sneak: default(),
+                        roll: default(),
+                    },
+                );
+                attribute_bases.inject(
+                    injected_payloads,
+                    source_uuid,
+                    format!("attribute_bases/{}", key.path_string()),
+                    AttributeBase::new(base.attributes.clone()),
+                );
             },
         )),
     )
-    .add_observer(
+    /*.add_observer(
         (|_on_reload_metadata: On<ReloadMetadataRequest>,
           mut block_colliders: RegMut<BlockCollider>,
           mut block_models: RegMut<BlockModel>| {
@@ -279,7 +305,7 @@ fn reload_metadata_plugin(app: &mut App) {
         >(
             &BLOCK_PATTERN,
             "block",
-            |key,
+            |injected_payloads, source_uuid, key,
              block,
              (
                 payload_manager,
@@ -324,30 +350,45 @@ fn reload_metadata_plugin(app: &mut App) {
                     .unwrap();
             },
         ),
-    )
+    )*/
     .add_observer(
-        (|_on_reload_metadata: On<ReloadMetadataRequest>, mut item_actions: RegMut<ItemAction>| {
+        (|_on_reload_metadata: On<ReloadMetadataRequest>,
+          mut item_actions: ResMut<Assets<ItemAction>>| {
             item_actions.clear();
             StaticSystemInput(())
         })
         .pipe(process_meta::<
             (),
             ItemActionMeta,
-            (RegBoxed<dyn ItemActionTemplate>, RegMut<ItemAction>),
+            (
+                Res<PayloadManager>,
+                Res<AssetServer>,
+                Res<Assets<BoxedItemActionBuilder>>,
+                ResMut<Assets<ItemAction>>,
+            ),
         >(
             &ITEM_ACTION_PATTERN,
             "item action",
-            |key, action, (item_action_templates, item_actions), ()| match item_action_templates
-                .get(&action.template)
-            {
-                Some(template) => {
-                    item_actions
-                        .register_keyed(
-                            template
-                                .create(key, action.config.clone())
-                                .expect("Failed to apply item action template"),
-                        )
-                        .expect("Failed to register item action");
+            |injected_payloads,
+             source_uuid,
+             key,
+             action,
+             (payload_manager, asset_server, item_action_builders, item_actions),
+             ()| match resolve_payload(
+                &payload_manager,
+                &asset_server,
+                item_action_builders,
+                format!("item_action_builders/{}", action.template.path_string()),
+            ) {
+                Some(builder) => {
+                    item_actions.inject(
+                        injected_payloads,
+                        source_uuid,
+                        format!("item_actions/{}", key.path_string()),
+                        builder
+                            .build(key, action.config.clone())
+                            .expect("Failed to build item action"),
+                    );
                 }
                 None => error!("Unknown item action template: {}", action.template),
             },
@@ -358,50 +399,59 @@ fn reload_metadata_plugin(app: &mut App) {
             .pipe(process_meta::<In<Vec<_>>, ItemPrototype, ()>(
                 &ITEM_PROTOTYPE_PATTERN,
                 "item prototype",
-                |key, prototype, (), item_prototype_components| {
+                |_injected_payloads,
+                 _source_uuid,
+                 key,
+                 prototype,
+                 (),
+                 item_prototype_components| {
                     for (component, value) in &prototype.0 {
-                        let component =
+                        item_prototype_components.push((
+                            key.clone(),
                             match NamespacedKey::try_from_with_embers(component.as_str()) {
                                 Ok(key) => key,
                                 Err(err) => {
                                     error!("Invalid item component key in {}: {}", key, err);
                                     continue;
                                 }
-                            };
-                        item_prototype_components.push((
-                            key.clone(),
-                            component.clone(),
+                            },
                             value.clone(),
                         ));
                     }
                 },
             ))
-            .pipe(|In(item_prototype_components), mut world: DeferredWorld| {
-                for item_component in world
-                    .resource::<RegistryBoxed<dyn ItemComponent>>()
-                    .values()
-                    .map(|item_component| (*item_component).clone())
-                    .collect::<Box<[_]>>()
-                {
-                    item_component.reset_registry(&mut world);
-                }
-                for (item, item_component, value) in item_prototype_components {
-                    match world
-                        .resource::<RegistryBoxed<dyn ItemComponent>>()
-                        .get(&item_component)
+            .pipe(
+                |In(item_prototype_components): In<Vec<(_, NamespacedKey, _)>>,
+                 mut world: DeferredWorld| {
+                    // TODO why the type annotation?
+                    for item_component in world
+                        .resource::<Assets<BoxedItemComponent>>()
+                        .iter()
+                        .map(|(_id, item_component)| item_component.dyn_clone())
+                        .collect::<Box<[_]>>()
                     {
-                        Some(item_component) => {
-                            (*item_component)
-                                .clone()
-                                .register_prototype(&mut world, item, value);
-                        }
-                        None => error!(
-                            "Unknown item component key in prototype '{}': {}",
-                            item, item_component,
-                        ),
+                        item_component.dyn_clone().clear_prototypes(&mut world);
                     }
-                }
-            }),
+                    for (item, item_component, prototype) in item_prototype_components {
+                        match resolve_payload(
+                            world.resource::<PayloadManager>(),
+                            world.resource::<AssetServer>(),
+                            world.resource::<Assets<BoxedItemComponent>>(),
+                            format!("item_components/{}", item_component.path_string()),
+                        ) {
+                            Some(item_component) => {
+                                item_component
+                                    .dyn_clone()
+                                    .insert_prototype(&mut world, item, prototype);
+                            }
+                            None => error!(
+                                "Unknown item component key in prototype '{}': {}",
+                                item, item_component,
+                            ),
+                        }
+                    }
+                },
+            ),
     );
 }
 

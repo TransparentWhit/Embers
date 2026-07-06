@@ -1,5 +1,4 @@
 use super::block::{Block, BlockCollider, BlockModel, BlockVoxelModel};
-use crate::reg::{Registry, ValueIndex};
 use crate::utils::Keyed;
 use avian3d::prelude::*;
 use bevy::ecs::lifecycle::HookContext;
@@ -13,7 +12,7 @@ pub struct Chunk {
 }
 
 fn chunk_insertion_hook(mut world: DeferredWorld, context: HookContext) {
-    let collider_reg = world.resource::<Registry<BlockCollider>>();
+    /*let collider_reg = world.resource::<Registry<BlockCollider>>();
     let voxel_coords = world
         .get::<Chunk>(context.entity)
         .unwrap()
@@ -69,7 +68,7 @@ fn chunk_insertion_hook(mut world: DeferredWorld, context: HookContext) {
         Collider::voxels(BlockCollider::VOXEL_SIZE, voxel_coords.as_ref()),
         Mesh3d(mesh),
         MeshMaterial3d::<StandardMaterial>(todo!()),
-    ));
+    ));*/
 }
 
 fn chunk_removal_hook(mut world: DeferredWorld, context: HookContext) {
@@ -108,7 +107,7 @@ impl ChunkMeshData {
 }
 
 pub struct BlockVoxel {
-    pub block_type: Option<ValueIndex<BlockModel>>,
+    //pub block_type: Option<ValueIndex<BlockModel>>,
 }
 
 #[derive(Resource)]

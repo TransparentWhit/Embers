@@ -2,17 +2,21 @@ pub mod inv;
 
 use super::actor::living::player::Player;
 use super::actor::primed_tnt::primed_tnt;
-use super::{Action, Actions, CollisionLayer, exclude_source};
+use super::{Action, ActionSlots, CollisionLayer, exclude_source};
 use crate::input::InteractionTrigger;
-use crate::pld::PayloadManager;
-use crate::reg::{RegBoxedMut, Registry, RegistryBoxed, RegistryError, RegistryInitExt};
+use crate::pld::{
+    Boxed, EMBERS_PAYLOAD_SOURCE_UUID, InjectedPayloads, Payloads, inject_embers_payload_batch,
+    inject_keyed_embers_payload_batch,
+};
 use crate::utils::physics::section;
-use crate::utils::{Keyed, NamespacedKey, UntypedCmp, UntypedPartialCmp};
+use crate::utils::{DynCmp, DynPartialCmp, Keyed, NamespacedKey};
 use anyhow::Error;
 use avian3d::prelude::*;
 use bevy::ecs::system::{StaticSystemParam, SystemParam};
 use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
+use bevy::reflect::DynamicTypePath;
+use derive_where::derive_where;
 use embers_macros::identify;
 use serde::{Deserialize, Serialize};
 use std::iter::once;
@@ -21,6 +25,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use thiserror::Error;
 use toml::{Table, Value};
+use uuid::Uuid;
 
 pub mod embers {
     macro_rules! item {
@@ -61,7 +66,7 @@ impl ItemStack {
     }
 }
 
-#[derive(Component, Deserialize, Serialize, Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Component, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct StackCount(u8);
 
@@ -71,11 +76,106 @@ impl Default for StackCount {
     }
 }
 
-#[derive(Component, Deserialize, Serialize, Clone, Debug, Eq, Hash, PartialEq)]
-#[require(ItemStack)]
-pub struct RangedAmmo();
+pub trait ItemComponent:
+    DynamicTypePath + Keyed + for<'world> DynCmp<EntityRef<'world>> + Send + Sync + 'static
+{
+    fn dyn_clone(&self) -> Box<dyn ItemComponent>;
+    fn clear_prototypes(&self, world: &mut DeferredWorld);
+    fn insert_prototype(&self, world: &mut DeferredWorld, item: NamespacedKey, prototype: Value);
+}
 
-#[derive(Component, Deserialize, Serialize, Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(TypePath)]
+#[doc(hidden)]
+pub enum DynItemComponent {}
+
+pub type BoxedItemComponent = Boxed<DynItemComponent, dyn ItemComponent>;
+
+#[derive_where(Clone)]
+#[derive(TypePath)]
+pub struct StandardItemComponent<C: Component + for<'de> Deserialize<'de> + Eq + TypePath> {
+    source_uuid: Uuid,
+    key: NamespacedKey,
+    _marker: PhantomData<fn() -> C>,
+}
+
+impl<C: Component + for<'de> Deserialize<'de> + Eq + TypePath> Keyed for StandardItemComponent<C> {
+    fn key(&self) -> &NamespacedKey {
+        &self.key
+    }
+}
+
+impl<C: Component + for<'de> Deserialize<'de> + Eq + TypePath>
+    DynPartialCmp<EntityRef<'_>, EntityRef<'_>> for StandardItemComponent<C>
+{
+    fn dyn_eq(&self, lhs: EntityRef<'_>, rhs: EntityRef<'_>) -> bool {
+        match (lhs.get::<C>(), rhs.get::<C>()) {
+            (Some(lhs), Some(rhs)) => *lhs == *rhs,
+            (None, None) => true,
+            _ => false,
+        }
+    }
+}
+
+impl<C: Component + for<'de> Deserialize<'de> + Eq + TypePath> DynCmp<EntityRef<'_>>
+    for StandardItemComponent<C>
+{
+}
+
+impl<C: Component + for<'de> Deserialize<'de> + Eq + TypePath> StandardItemComponent<C> {
+    pub fn new(source_uuid: Uuid, key: NamespacedKey) -> BoxedItemComponent {
+        BoxedItemComponent::new_boxed(Box::new(Self {
+            source_uuid,
+            key,
+            _marker: PhantomData,
+        }))
+    }
+    #[inline]
+    pub fn new_embers(key: NamespacedKey) -> BoxedItemComponent {
+        Self::new(EMBERS_PAYLOAD_SOURCE_UUID.clone(), key)
+    }
+}
+
+impl<C: Component + for<'de> Deserialize<'de> + Eq + TypePath> ItemComponent
+    for StandardItemComponent<C>
+{
+    fn dyn_clone(&self) -> Box<dyn ItemComponent> {
+        Box::new(self.clone())
+    }
+    fn clear_prototypes(&self, world: &mut DeferredWorld) {
+        world
+            .resource_mut::<Assets<ItemComponentPrototype<C>>>()
+            .clear();
+    }
+    fn insert_prototype(&self, world: &mut DeferredWorld, item: NamespacedKey, value: Value) {
+        let resource_entities = world.resource_entities();
+        let [mut prototypes, mut injected_payloads] = world.entity_mut([
+            resource_entities
+                .get(
+                    world
+                        .component_id::<Assets<ItemComponentPrototype<C>>>()
+                        .unwrap(),
+                )
+                .unwrap(),
+            resource_entities
+                .get(world.component_id::<InjectedPayloads>().unwrap())
+                .unwrap(),
+        ]);
+        prototypes
+            .get_mut::<Assets<ItemComponentPrototype<C>>>()
+            .unwrap()
+            .inject(
+                &mut injected_payloads.get_mut::<InjectedPayloads>().unwrap(),
+                self.source_uuid,
+                format!("item_component_pro/{}", item.path_string()),
+                ItemComponentPrototype(C::deserialize(value).unwrap()),
+            );
+    }
+}
+
+#[derive(Asset, TypePath)]
+pub struct ItemComponentPrototype<C: Component + TypePath>(pub C);
+
+#[derive(Clone, Component, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, TypePath)]
 #[require(ItemStack)]
 pub struct Enchantments();
 
@@ -85,18 +185,8 @@ impl Default for Enchantments {
     }
 }
 
-#[derive(Component, Deserialize, Serialize, Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Component, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, TypePath)]
 #[require(ItemStack)]
-#[serde(transparent)]
-pub struct MaxStackSize(u8);
-
-impl Default for MaxStackSize {
-    fn default() -> Self {
-        Self(1)
-    }
-}
-
-#[derive(Component, Deserialize, Serialize, Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct InitialItemActions {
     hands_click: Option<NamespacedKey>,
     hands_double_click: Option<NamespacedKey>,
@@ -118,6 +208,34 @@ impl InitialItemActions {
         }
     }
 }
+
+#[derive(Clone, Component, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, TypePath)]
+#[require(ItemStack)]
+#[serde(transparent)]
+pub struct MaxStackSize(u8);
+
+impl Default for MaxStackSize {
+    fn default() -> Self {
+        Self(1)
+    }
+}
+
+#[derive(Clone, Component, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, TypePath)]
+#[require(ItemStack)]
+pub struct RangedAmmo();
+
+#[derive(Clone, Component, Debug, Deserialize, Serialize, TypePath)]
+#[require(ItemStack)]
+#[serde(transparent)]
+pub struct Weight(f32);
+
+impl PartialEq for Weight {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0 || (self.0.is_nan() && other.0.is_nan())
+    }
+}
+
+impl Eq for Weight {}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ItemActionSlot {
@@ -154,17 +272,23 @@ pub enum HandActionWield {
     Dual,
 }
 
-pub trait ItemActionTemplate: Send + Sync {
-    fn create(&self, key: NamespacedKey, config: Table) -> Result<ItemAction, Error>;
+pub trait ItemActionBuilder: Send + Sync {
+    fn build(&self, key: NamespacedKey, config: Table) -> Result<ItemAction, Error>;
 }
 
-impl<T: (Fn(NamespacedKey, Table) -> Result<ItemAction, Error>) + Send + Sync> ItemActionTemplate
+impl<T: (Fn(NamespacedKey, Table) -> Result<ItemAction, Error>) + Send + Sync> ItemActionBuilder
     for T
 {
-    fn create(&self, key: NamespacedKey, config: Table) -> Result<ItemAction, Error> {
+    fn build(&self, key: NamespacedKey, config: Table) -> Result<ItemAction, Error> {
         self(key, config)
     }
 }
+
+#[derive(TypePath)]
+#[doc(hidden)]
+pub enum DynItemActionBuilder {}
+
+pub type BoxedItemActionBuilder = Boxed<DynItemActionBuilder, dyn ItemActionBuilder>;
 
 #[derive(SystemParam)]
 pub struct ItemActionEnvironment<'w, 's> {
@@ -174,10 +298,11 @@ pub struct ItemActionEnvironment<'w, 's> {
     player: Single<'w, 's, (Entity, &'static Transform), With<Player>>,
 }
 
-pub type ItemActions = Actions<ItemAction>;
+pub type ItemActionSlots = ActionSlots<ItemAction>;
 
-#[derive(Clone)]
+#[derive(Asset, Clone, TypePath)]
 #[identify(key)]
+// TODO inspect do we need to clone this?
 pub struct ItemAction {
     key: NamespacedKey,
     on_begin: Arc<dyn Fn(&mut ItemActionEnvironment, Entity) + Send + Sync>,
@@ -235,257 +360,151 @@ impl Action for ItemAction {
     }
 }
 
-#[derive(Component, Deserialize, Serialize, Debug)]
-#[require(ItemStack)]
-#[serde(transparent)]
-pub struct Weight(f32);
-
-impl PartialEq for Weight {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0 || (self.0.is_nan() && other.0.is_nan())
-    }
-}
-impl Eq for Weight {}
-
-pub fn sword() -> impl Bundle {
+pub fn sword() -> impl Bundle + Clone {
     ItemStack(embers::SWORD.clone())
 }
 
-pub fn spear() -> impl Bundle {
+pub fn spear() -> impl Bundle + Clone {
     ItemStack(embers::SPEAR.clone())
 }
 
-pub fn tnt() -> impl Bundle {
+pub fn tnt() -> impl Bundle + Clone {
     ItemStack(embers::TNT.clone())
 }
 
-pub trait ItemComponent: Keyed + for<'world> UntypedCmp<EntityRef<'world>> + Send + Sync {
-    fn clone(&self) -> Box<dyn ItemComponent>;
-    fn reset_registry(&self, world: &mut DeferredWorld);
-    fn register_prototype(&self, world: &mut DeferredWorld, item: NamespacedKey, value: Value);
-}
-
-impl RegistryBoxed<dyn ItemComponent> {
-    pub fn register_default<C: Component + for<'de> Deserialize<'de> + Eq>(
-        &mut self,
-        key: NamespacedKey,
-    ) -> Result<NamespacedKey, RegistryError> {
-        struct DefaultItemComponent<C: Component + for<'de> Deserialize<'de> + Eq>(
-            NamespacedKey,
-            PhantomData<C>,
-        );
-        impl<C: Component + for<'de> Deserialize<'de> + Eq> Keyed for DefaultItemComponent<C> {
-            fn key(&self) -> &NamespacedKey {
-                &self.0
-            }
-        }
-        impl<C: Component + for<'de> Deserialize<'de> + Eq>
-            UntypedPartialCmp<EntityRef<'_>, EntityRef<'_>> for DefaultItemComponent<C>
-        {
-            fn eq(&self, lhs: EntityRef<'_>, rhs: EntityRef<'_>) -> bool {
-                match (lhs.get::<C>(), rhs.get::<C>()) {
-                    (Some(lhs), Some(rhs)) => *lhs == *rhs,
-                    (None, None) => true,
-                    _ => false,
-                }
-            }
-        }
-        impl<C: Component + for<'de> Deserialize<'de> + Eq> UntypedCmp<EntityRef<'_>>
-            for DefaultItemComponent<C>
-        {
-        }
-        impl<C: Component + for<'de> Deserialize<'de> + Eq> ItemComponent for DefaultItemComponent<C> {
-            fn clone(&self) -> Box<dyn ItemComponent> {
-                Box::new(Self(self.0.clone(), PhantomData))
-            }
-            fn reset_registry(&self, world: &mut DeferredWorld) {
-                world.resource_mut::<Registry<C>>().clear();
-            }
-            fn register_prototype(
-                &self,
-                world: &mut DeferredWorld,
-                item: NamespacedKey,
-                value: Value,
-            ) {
-                world
-                    .resource_mut::<Registry<C>>()
-                    .register(item, C::deserialize(value).unwrap())
-                    .expect("Failed to register item component prototype value");
-            }
-        }
-        self.register_keyed(Box::new(DefaultItemComponent(key, PhantomData::<C>)))
-    }
-}
-
 pub(super) fn plugin(app: &mut App) {
-    app.init_registry::<Enchantments>()
-        .init_registry::<InitialItemActions>()
-        .init_registry::<ItemAction>()
-        .init_registry_boxed::<dyn ItemActionTemplate>()
-        .init_registry::<MaxStackSize>()
-        .init_registry::<RangedAmmo>()
-        .init_registry::<Weight>()
-        .init_registry_boxed::<dyn ItemComponent>()
-        .add_systems(
-            PreStartup,
-            (
-                |mut item_action_templates: RegBoxedMut<dyn ItemActionTemplate>| {
-                    (|| {
-                        item_action_templates.register(
-                            NamespacedKey::new_embers("melee"),
-                            Box::new(|key, config| {
-                                #[derive(Deserialize)]
-                                struct Melee {
-                                    damage: f32,
-                                    arc_deg: f32,
-                                    range: f32,
-                                    wield: HandActionWield,
-                                    duration_secs: f32,
-                                    next_action: Option<String>,
+    app
+        .init_asset::<ItemAction>()
+        .init_asset::<BoxedItemActionBuilder>()
+        .add_systems(PreStartup, inject_embers_payload_batch::<BoxedItemActionBuilder>("item_action_builders/{}", [
+            (NamespacedKey::new_embers("melee"), Box::new(|key, config| {
+                #[derive(Deserialize)]
+                struct Melee {
+                    damage: f32,
+                    arc_deg: f32,
+                    range: f32,
+                    wield: HandActionWield,
+                    duration_secs: f32,
+                    next_action: Option<String>,
+                }
+                let action = Melee::deserialize(config)?;
+                #[derive(Debug, Error)]
+                #[error("Couldn't create a collider for the given arc_deg({arc_deg}) and range({range}).")]
+                struct NoCollider {
+                    arc_deg: f32,
+                    range: f32,
+                }
+                let collider = section(action.arc_deg.to_radians(), action.range, 1.).ok_or(NoCollider {
+                    arc_deg: action.arc_deg,
+                    range: action.range,
+                })?;
+                let spatial_query_filter = SpatialQueryFilter::from_mask(CollisionLayer::LivingActor);
+                let next_action = action.next_action.as_ref().and_then(|next| {
+                    NamespacedKey::try_from_with_namespaced(next.as_str(), &key)
+                        .ok()
+                });
+                Ok(ItemAction::new(
+                    key,
+                    |_environment, _item| {},
+                    move |ItemActionEnvironment {
+                            commands,
+                            spatial_query,
+                            asset_server: _,
+                            player,
+                        }, item, duration| {
+                            let (player, transform) = **player;
+                            if duration.is_none() {
+                                for entity in spatial_query.shape_intersections(&collider, transform.translation, transform.rotation, &spatial_query_filter.clone().with_excluded_entities(once(player))) {
+                                    // todo
                                 }
-                                let action = Melee::deserialize(config)?;
-                                #[derive(Debug, Error)]
-                                #[error("Couldn't create a collider for the given arc_deg({arc_deg}) and range({range}).")]
-                                struct NoCollider {
-                                    arc_deg: f32,
-                                    range: f32,
-                                }
-                                let collider = section(action.arc_deg.to_radians(), action.range, 1.).ok_or(NoCollider {
-                                    arc_deg: action.arc_deg,
-                                    range: action.range,
-                                })?;
-                                let spatial_query_filter = SpatialQueryFilter::from_mask(CollisionLayer::LivingActor);
-                                let next_action = action.next_action.as_ref().and_then(|next| {
-                                    NamespacedKey::try_from_with_namespaced(next.as_str(), &key)
-                                        .ok()
-                                });
-                                Ok(ItemAction::new(
-                                    key,
-                                    |_environment, _item| {},
-                                    move |ItemActionEnvironment {
-                                            commands,
-                                            spatial_query,
-                                            asset_server: _,
-                                            player,
-                                        }, item, duration| {
-                                            let (player, transform) = **player;
-                                            if duration.is_none() {
-                                                for entity in spatial_query.shape_intersections(&collider, transform.translation, transform.rotation, &spatial_query_filter.clone().with_excluded_entities(once(player))) {
-                                                    // todo
-                                                }
-                                                next_action.clone()
-                                            } else {
-                                                None
-                                            }
-                                        },
-                                    ItemActionWield::Hands(action.wield),
-                                    Duration::from_secs_f32(action.duration_secs),
-                                ))
-                            }),
-                        )?;
-                        item_action_templates.register(
-                            NamespacedKey::new_embers("throw"),
-                            Box::new(|key, config| {
-                                #[derive(Deserialize)]
-                                struct Throw {
-                                    velocity: f32,
-                                    wield: HandActionWield,
-                                    timeout_secs: f32,
-                                    next_action: Option<String>,
-                                }
-                                let action = Throw::deserialize(config)?;
-                                let velocity = action.velocity;
-                                let next_action = action.next_action.as_ref().and_then(|next| {
-                                    NamespacedKey::try_from_with_namespaced(next.as_str(), &key)
-                                        .ok()
-                                });
-                                Ok(ItemAction::new(
-                                    key,
-                                move |ItemActionEnvironment {
-                                        commands,
-                                        spatial_query: _,
-                                        asset_server,
-                                        player,
-                                    }, _item| {
-                                        let (player, transform) = **player;
-                                        let transform = transform.clone();
-                                        commands.spawn_scene(bsn! {
-                                            primed_tnt()
-                                        });
-                                        commands.queue(move |world: &mut World| {
-                                            world.spawn((
-                                                primed_tnt(),
-                                                exclude_source(player),
-                                                transform.clone(),
-                                                LinearVelocity(transform.rotation * -Vec3::Z * velocity),
-                                            ));
-                                        }) // TODO use bsn after Bevy 0.19
-                                    },
-                                    move |_environment, _item, _duration| next_action.clone(),
-                                    ItemActionWield::Hands(action.wield),
-                                    Duration::from_secs_f32(action.timeout_secs),
-                                ))
-                            }),
-                        )?;
-                        item_action_templates.register(
-                            NamespacedKey::new_embers("charged_throw"),
-                            Box::new(|key, config| {
-                                #[derive(Deserialize)]
-                                struct ChargedThrow {
-                                    wield: HandActionWield,
-                                    hold_threshold_secs: Option<f32>,
-                                    hold_action: Option<String>,
-                                }
-                                let action = ChargedThrow::deserialize(config)?;
-                                let hold_action = action.hold_action.as_ref().and_then(|next| {
-                                    NamespacedKey::try_from_with_namespaced(next.as_str(), &key)
-                                        .ok()
-                                });
-                                Ok(ItemAction::new(
-                                    key,
-                                    |_environment, _item| {},
-                                    move |ItemActionEnvironment {
-                                            commands,
-                                            spatial_query: _,
-                                            asset_server,
-                                            player,
-                                        }, _item, duration| {
-                                            if duration.is_none() {
-                                                hold_action.clone()
-                                            } else {
-                                                println!("throwing");
-                                                None
-                                            }
-                                        },
-                                    ItemActionWield::Hands(action.wield),
-                                    action.hold_threshold_secs.map_or(Duration::MAX, Duration::from_secs_f32),
-                                ))
-                            }),
-                        )?;
-                        Ok::<(), RegistryError>(())
-                    })()
-                    .expect("Failed to register item action templates");
-                },
-                |mut item_components: RegBoxedMut<dyn ItemComponent>| {
-                    (|| {
-                        item_components.register_default::<RangedAmmo>(
-                            NamespacedKey::new_embers("ranged_ammo"),
-                        )?;
-                        item_components.register_default::<Enchantments>(
-                            NamespacedKey::new_embers("enchantments"),
-                        )?;
-                        item_components.register_default::<InitialItemActions>(
-                            NamespacedKey::new_embers("initial_actions"),
-                        )?;
-                        item_components.register_default::<MaxStackSize>(
-                            NamespacedKey::new_embers("max_stack_size"),
-                        )?;
-                        item_components
-                            .register_default::<Weight>(NamespacedKey::new_embers("weight"))?;
-                        Ok::<(), RegistryError>(())
-                    })()
-                    .expect("Failed to register item components")
-                },
-            ),
-        );
+                                next_action.clone()
+                            } else {
+                                None
+                            }
+                        },
+                    ItemActionWield::Hands(action.wield),
+                    Duration::from_secs_f32(action.duration_secs),
+                ))
+            }) as Box<dyn ItemActionBuilder>),
+            (NamespacedKey::new_embers("throw"), Box::new(|key, config| {
+                #[derive(Deserialize)]
+                struct Throw {
+                    velocity: f32,
+                    wield: HandActionWield,
+                    timeout_secs: f32,
+                    next_action: Option<String>,
+                }
+                let action = Throw::deserialize(config)?;
+                let velocity = action.velocity;
+                let next_action = action.next_action.as_ref().and_then(|next| {
+                    NamespacedKey::try_from_with_namespaced(next.as_str(), &key)
+                        .ok()
+                });
+                Ok(ItemAction::new(
+                    key,
+                move |ItemActionEnvironment {
+                        commands,
+                        spatial_query: _,
+                        asset_server,
+                        player,
+                    }, _item| {
+                        let (player, transform) = **player;
+                        commands.spawn_scene(bsn! {
+                            primed_tnt()
+                            // exclude_source(player) TODO
+                            template_value({transform.clone()})
+                            LinearVelocity({transform.rotation * -Vec3::Z * velocity})
+                        });
+                    },
+                    move |_environment, _item, _duration| next_action.clone(),
+                    ItemActionWield::Hands(action.wield),
+                    Duration::from_secs_f32(action.timeout_secs),
+                ))
+            })),
+            (NamespacedKey::new_embers("charged_throw"), Box::new(|key, config| {
+                #[derive(Deserialize)]
+                struct ChargedThrow {
+                    wield: HandActionWield,
+                    hold_threshold_secs: Option<f32>,
+                    hold_action: Option<String>,
+                }
+                let action = ChargedThrow::deserialize(config)?;
+                let hold_action = action.hold_action.as_ref().and_then(|next| {
+                    NamespacedKey::try_from_with_namespaced(next.as_str(), &key)
+                        .ok()
+                });
+                Ok(ItemAction::new(
+                    key,
+                    |_environment, _item| {},
+                    move |ItemActionEnvironment {
+                            commands,
+                            spatial_query: _,
+                            asset_server,
+                            player,
+                        }, _item, duration| {
+                            if duration.is_none() {
+                                hold_action.clone()
+                            } else {
+                                println!("throwing");
+                                None
+                            }
+                        },
+                    ItemActionWield::Hands(action.wield),
+                    action.hold_threshold_secs.map_or(Duration::MAX, Duration::from_secs_f32),
+                ))
+            })),
+        ]))
+        .init_asset::<BoxedItemComponent>()
+        .add_systems(PreStartup, inject_keyed_embers_payload_batch::<BoxedItemComponent>("item_components/{}", [
+            StandardItemComponent::<Enchantments>::new_embers(NamespacedKey::new_embers("enchantments")),
+            StandardItemComponent::<InitialItemActions>::new_embers(NamespacedKey::new_embers("initial_actions")),
+            StandardItemComponent::<MaxStackSize>::new_embers(NamespacedKey::new_embers("max_stack_size")),
+            StandardItemComponent::<RangedAmmo>::new_embers(NamespacedKey::new_embers("ranged_ammo")),
+            StandardItemComponent::<Weight>::new_embers(NamespacedKey::new_embers("weight")),
+        ]))
+        .init_asset::<ItemComponentPrototype<Enchantments>>()
+        .init_asset::<ItemComponentPrototype<InitialItemActions>>()
+        .init_asset::<ItemComponentPrototype<MaxStackSize>>()
+        .init_asset::<ItemComponentPrototype<RangedAmmo>>()
+        .init_asset::<ItemComponentPrototype<Weight>>();
 }

@@ -3,12 +3,11 @@ use crate::dim::{ActiveDimension, Dimension, DimensionGenerationRequest};
 use crate::pld::meta::ReloadMetadataRequest;
 use crate::pld::{
     EvictPayloadScopeRequest, FetchPayloadScopeRequest, MountPayloadSourceRequest,
-    PayloadFetchingComplete, PayloadScopeId, RefetchPayloadRequest, UnmountPayloadSourceRequest,
-    ui_image_node,
+    PayloadFetchingComplete, PayloadScopeId, PayloadSourceId, RefetchPayloadRequest,
+    UnmountPayloadSourceRequest, ui_image_node,
 };
 use crate::utils::{Keyed, NamespacedKey};
 use bevy::app::App;
-use bevy::asset::io::AssetSourceId;
 use bevy::color::palettes::css::{WHITE, YELLOW};
 use bevy::ecs::query::{QueryData, ReadOnlyQueryData};
 use bevy::ecs::system::ObserverSystem;
@@ -46,11 +45,11 @@ pub enum MainMenuEntryContext {
 #[derive(Component, Default)]
 struct LoadingTask;
 
-trait LoadingTaskComponent: Component + Debug {
+trait LoadingTaskComponent: Clone + Component + Debug + Default {
     fn task(&self) -> impl Command;
 }
 
-#[derive(Component, Debug)]
+#[derive(Clone, Component, Debug, Default)]
 #[require(LoadingTask)]
 struct GameStateTransitionTask(GameState);
 
@@ -60,9 +59,15 @@ impl LoadingTaskComponent for GameStateTransitionTask {
     }
 }
 
-#[derive(Component, Debug)]
+#[derive(Clone, Component, Debug)]
 #[require(LoadingTask)]
 struct DimensionGenerationTask(NamespacedKey);
+
+impl Default for DimensionGenerationTask {
+    fn default() -> Self {
+        Self(Dimension::default().key().clone())
+    }
+}
 
 impl LoadingTaskComponent for DimensionGenerationTask {
     fn task(&self) -> impl Command {
@@ -70,7 +75,7 @@ impl LoadingTaskComponent for DimensionGenerationTask {
     }
 }
 
-#[derive(Component, Debug)]
+#[derive(Clone, Component, Debug, Default)]
 #[require(LoadingTask)]
 struct WorldSavingTask;
 
@@ -80,7 +85,7 @@ impl LoadingTaskComponent for WorldSavingTask {
     }
 }
 
-#[derive(Component, Debug)]
+#[derive(Clone, Component, Debug, Default)]
 #[require(LoadingTask)]
 struct FetchPayloadScopeTask(PayloadScopeId);
 
@@ -90,9 +95,9 @@ impl LoadingTaskComponent for FetchPayloadScopeTask {
     }
 }
 
-#[derive(Component, Debug)]
+#[derive(Clone, Component, Debug, Default)]
 #[require(LoadingTask)]
-struct MountPayloadSourceTask(AssetSourceId<'static>);
+struct MountPayloadSourceTask(PayloadSourceId);
 
 impl LoadingTaskComponent for MountPayloadSourceTask {
     fn task(&self) -> impl Command {
@@ -100,7 +105,7 @@ impl LoadingTaskComponent for MountPayloadSourceTask {
     }
 }
 
-#[derive(Component, Debug)]
+#[derive(Clone, Component, Debug, Default)]
 #[require(LoadingTask)]
 struct RefetchPayloadTask;
 
@@ -110,7 +115,7 @@ impl LoadingTaskComponent for RefetchPayloadTask {
     }
 }
 
-#[derive(Component, Debug)]
+#[derive(Clone, Component, Debug, Default)]
 #[require(LoadingTask)]
 struct EvictPayloadScopeTask(PayloadScopeId);
 
@@ -120,9 +125,9 @@ impl LoadingTaskComponent for EvictPayloadScopeTask {
     }
 }
 
-#[derive(Component, Debug)]
+#[derive(Clone, Component, Debug, Default)]
 #[require(LoadingTask)]
-struct UnmountPayloadSourceTask(AssetSourceId<'static>);
+struct UnmountPayloadSourceTask(PayloadSourceId);
 
 impl LoadingTaskComponent for UnmountPayloadSourceTask {
     fn task(&self) -> impl Command {
@@ -130,7 +135,7 @@ impl LoadingTaskComponent for UnmountPayloadSourceTask {
     }
 }
 
-#[derive(Component, Debug)]
+#[derive(Clone, Component, Debug, Default)]
 #[require(LoadingTask)]
 struct ReloadMetadataTask;
 
@@ -224,71 +229,66 @@ fn begin_loading(
     match loading {
         Load::EnterDimension(context, dimension_key) => match context {
             DimensionEntryContext::EnterWorld => {
-                commands.spawn((
-                    DimensionGenerationTask(dimension_key.clone()),
-                    related!(
-                        TaskDependencies[(
-                            ReloadMetadataTask,
-                            related!(
-                                TaskDependencies[(
-                                    FetchPayloadScopeTask(PayloadScopeId::Dimension(
-                                        dimension_key.clone()
-                                    )),
-                                    related!(
-                                        TaskDependencies
-                                            [GameStateTransitionTask(GameState::Dimension)]
-                                    ),
-                                )]
-                            )
-                        )]
-                    ),
-                ));
+                commands.spawn_scene(bsn! {
+                    DimensionGenerationTask({dimension_key.clone()})
+                    TaskDependencies [
+                        ReloadMetadataTask
+                        TaskDependencies [
+                            FetchPayloadScopeTask({PayloadScopeId::Dimension(dimension_key.clone())})
+                            TaskDependencies [
+                                GameStateTransitionTask(GameState::Dimension),
+                            ],
+                        ],
+                    ]
+                });
             }
             DimensionEntryContext::GatewayTravel | DimensionEntryContext::PortalTravel => {
                 todo!();
             }
         },
         Load::EnterMainMenu(MainMenuEntryContext::Init) => {
-            commands.spawn((
-                ReloadMetadataTask,
-                related!(TaskDependencies[
-                    MountPayloadSourceTask(AssetSourceId::Default),
+            commands.spawn_scene(bsn! {
+                ReloadMetadataTask
+                TaskDependencies [
+                    MountPayloadSourceTask(PayloadSourceId::new_embers()),
                     FetchPayloadScopeTask(PayloadScopeId::Global),
-                ]),
-            ));
+                ]
+            });
         }
         Load::EnterMainMenu(context) => {
-            let transition_and_unload = (
-                GameStateTransitionTask(GameState::MainMenu),
-                related!(
-                    TaskDependencies[(
-                        ReloadMetadataTask,
-                        related!(
-                            TaskDependencies[EvictPayloadScopeTask(PayloadScopeId::Dimension(
-                                active_dimension
-                                    .as_ref()
-                                    .expect("Can't exit world when there is no active dimension")
-                                    .key()
-                                    .clone(),
-                            ))]
-                        )
-                    )]
-                ),
-            );
+            let transition_and_unload = bsn! {
+                GameStateTransitionTask(GameState::MainMenu)
+                TaskDependencies[
+                    ReloadMetadataTask
+                    TaskDependencies[
+                        EvictPayloadScopeTask({PayloadScopeId::Dimension(
+                            active_dimension
+                                .as_ref()
+                                .expect("Can't exit world when there is no active dimension")
+                                .key()
+                                .clone(),
+                        )}),
+                    ],
+                ]
+            };
             match context {
-                MainMenuEntryContext::ExitWorld => commands.spawn(transition_and_unload),
-                MainMenuEntryContext::SaveAndExitWorld => commands.spawn((
-                    transition_and_unload,
-                    related!(TaskDependencies[WorldSavingTask]),
-                )),
+                MainMenuEntryContext::ExitWorld => commands.spawn_scene(transition_and_unload),
+                MainMenuEntryContext::SaveAndExitWorld => commands.spawn_scene(bsn! {
+                    transition_and_unload
+                    TaskDependencies [
+                        WorldSavingTask
+                    ]
+                }),
                 MainMenuEntryContext::Init => unreachable!(),
             };
         }
         Load::Reload => {
-            commands.spawn((
-                ReloadMetadataTask,
-                related!(TaskDependencies[RefetchPayloadTask]),
-            ));
+            commands.spawn_scene(bsn! {
+                ReloadMetadataTask
+                TaskDependencies [
+                    RefetchPayloadTask,
+                ]
+            });
         }
     }
     commands.trigger(InitializeTasks);
@@ -328,10 +328,11 @@ fn begin_task<T: LoadingTaskComponent>(
 ) {
     let _entered = loading_span.enter();
     let BeginTask(task) = *task_beginning;
-    if let Ok(pending_task) = pending_tasks.get(task) {
-        commands.queue(pending_task.task());
-        debug!(task = ?pending_task, "Begin task");
-    }
+    let Ok(pending_task) = pending_tasks.get(task) else {
+        return;
+    };
+    commands.queue(pending_task.task());
+    debug!(task = ?pending_task, "Begin task");
 }
 
 fn complete_task<T: LoadingTaskComponent, Completion: Event, Data: ReadOnlyQueryData + 'static>(
@@ -355,13 +356,15 @@ fn complete_task<T: LoadingTaskComponent, Completion: Event, Data: ReadOnlyQuery
                 debug!(task = ?loading_task, "Task complete");
                 commands.entity(task).despawn();
                 pending_task_count.0 -= 1;
-                if let Some(&TaskDependent(parent)) = dependent {
-                    if let Ok(mut dependency_count) = remaining_dependency_count.get_mut(parent) {
-                        dependency_count.0 -= 1;
-                        if dependency_count.0 == 0 {
-                            commands.trigger(BeginTask(parent));
-                        }
-                    }
+                let Some(&TaskDependent(parent)) = dependent else {
+                    continue;
+                };
+                let Ok(mut dependency_count) = remaining_dependency_count.get_mut(parent) else {
+                    continue;
+                };
+                dependency_count.0 -= 1;
+                if dependency_count.0 == 0 {
+                    commands.trigger(BeginTask(parent));
                 }
             }
             if pending_task_count.0 == 0 {
@@ -398,7 +401,7 @@ fn complete_instant_task<T: LoadingTaskComponent>()
     )
 }
 
-#[derive(Resource)]
+#[derive(Default, Resource)]
 struct LoadingScreenSettings {
     load_tip: Option<String>,
     target_tip: Option<String>,
@@ -462,6 +465,7 @@ pub(super) fn plugin(app: &mut App) {
     app.init_resource::<LoadingSpan>()
         .init_resource::<LoadingOverlay>()
         .init_resource::<PendingTaskCount>()
+        .init_resource::<LoadingScreenSettings>()
         .add_observer(begin_loading)
         .add_observer(init_tasks)
         .add_observer(begin_task::<GameStateTransitionTask>)

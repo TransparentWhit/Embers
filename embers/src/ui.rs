@@ -282,15 +282,15 @@ fn run_animations(time: Res<Time>, mut animated: Query<(&mut ImageNode, &mut Ani
             ref animation,
             ref mut timer,
         } = &mut *animated_texture;
-        if let Some(atlas) = &mut image_node.texture_atlas {
-            timer.tick(time.delta());
-            if timer.just_finished() {
-                atlas.index = atlas.index.wrapping_add(1);
-                if atlas.index >= animation.atlas_end_index
-                    || atlas.index < animation.atlas_begin_index
-                {
-                    atlas.index = animation.atlas_begin_index;
-                }
+        let Some(atlas) = &mut image_node.texture_atlas else {
+            continue;
+        };
+        timer.tick(time.delta());
+        if timer.just_finished() {
+            atlas.index = atlas.index.wrapping_add(1);
+            if atlas.index >= animation.atlas_end_index || atlas.index < animation.atlas_begin_index
+            {
+                atlas.index = animation.atlas_begin_index;
             }
         }
     }
@@ -311,19 +311,21 @@ fn set_window_icons(
     WINIT_WINDOWS.with_borrow(|winit_windows| {
         for (window_entity, mut window, set_window_icon) in windows.iter_mut() {
             window.visible = true;
-            if let Some(winit_window) = winit_windows.get_window(window_entity) {
-                if let Some(window_icon) = images.get(&set_window_icon.image) {
-                    winit_window.set_window_icon(
-                        Icon::from_rgba(
-                            window_icon.data.clone().unwrap(),
-                            window_icon.width(),
-                            window_icon.height(),
-                        )
-                        .ok(),
-                    );
-                    commands.entity(window_entity).remove::<SetWindowIcon>();
-                }
-            }
+            let Some(winit_window) = winit_windows.get_window(window_entity) else {
+                continue;
+            };
+            let Some(window_icon) = images.get(&set_window_icon.image) else {
+                continue;
+            };
+            winit_window.set_window_icon(
+                Icon::from_rgba(
+                    window_icon.data.clone().unwrap(),
+                    window_icon.width(),
+                    window_icon.height(),
+                )
+                .ok(),
+            );
+            commands.entity(window_entity).remove::<SetWindowIcon>();
         }
     })
 }

@@ -1,23 +1,23 @@
-use super::attributes::embers;
-use super::{AttributeBase, Attributes, living_actor};
+use super::attributes::{Attributes, MovementSpeed};
+use super::living_actor;
 use crate::dim::actor::MOVEMENT_CONFIG_NAMESPACE;
 use crate::dim::item::inv::{
     Inventory, InventorySlot, ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt,
 };
 use crate::dim::item::{
-    HandActionWield, ItemAction, ItemActionEnvironment, ItemActionWield, ItemActions, ItemStack,
+    HandActionWield, ItemAction, ItemActionEnvironment, ItemActionSlots, ItemActionWield,
 };
 use crate::dim::item::{InitialItemActions, ItemActionSlot};
 use crate::dim::{
-    ActionStatus, ActionStatusComponent, Actions, ActionsComponent, CollisionLayer,
-    EntityInteraction, EntityInteractionEnvironment, EntityInteractions, Interactable, Movements,
-    update_action,
+    ActionSlots, ActionSlotsComponent, ActionStatus, ActionStatusComponent, CollisionLayer,
+    EntityInteraction, EntityInteractionEnvironment, EntityInteractionSlots, Interactable,
+    Movements, update_action,
 };
 use crate::input::{DoubleClicks, InputButton, InteractionTrigger, just_pressed, pressed};
-use crate::reg::{OrRegistry, Reg, Registry};
+use crate::pld::{PayloadManager, resolve_handle};
 use crate::ui::dim::PlayerCamera;
 use crate::ui::{ActiveOverlay, GameState};
-use crate::utils::{Keyed, NamespacedKey};
+use crate::utils::NamespacedKey;
 use avian3d::prelude::*;
 use bevy::ecs::schedule::ScheduleConfigs;
 use bevy::ecs::system::ScheduleSystem;
@@ -91,13 +91,15 @@ static ENTITY_INTERACTION_COLLIDER: LazyLock<Collider> =
     LazyLock::new(|| Collider::cylinder(3., 2.));
 
 fn process_input_entity_interactions_schedule() -> ScheduleConfigs<ScheduleSystem> {
-    |spatial_query: SpatialQuery,
+    |payload_manager: Res<PayloadManager>,
+     asset_server: Res<AssetServer>,
+     spatial_query: SpatialQuery,
      keys: Res<ButtonInput<KeyCode>>,
      mouse: Res<ButtonInput<MouseButton>>,
      double_clicks: Res<DoubleClicks>,
      mut player: Single<(Entity, &mut PlayerEntityInteractions, &GlobalTransform), With<Player>>,
      interactables: Query<(&Interactable, &GlobalTransform)>,
-     entity_interaction_reg: Reg<EntityInteraction>,
+     entity_interactions: Res<Assets<EntityInteraction>>,
      active_overlay: Res<State<ActiveOverlay>>|
      -> (Entity, (), Option<InteractionTrigger>, Option<Entity>) {
         let (player, ref mut player_interactions, transform) = *player;
@@ -144,8 +146,17 @@ fn process_input_entity_interactions_schedule() -> ScheduleConfigs<ScheduleSyste
                     for trigger in [InteractionTrigger::DoubleClick, InteractionTrigger::Click] {
                         interactable
                             .get_initial_interaction(trigger)
-                            .as_ref()
-                            .and_then(|interaction_key| entity_interaction_reg.get(interaction_key))
+                            .and_then(|interaction_key| {
+                                resolve_handle(
+                                    &payload_manager,
+                                    &asset_server,
+                                    &entity_interactions,
+                                    format!(
+                                        "entity_interactions/{}",
+                                        interaction_key.path_string()
+                                    ),
+                                )
+                            })
                             .map(|interaction| {
                                 player_interactions
                                     .0
@@ -180,6 +191,7 @@ fn process_input_item_actions_schedule() -> ScheduleConfigs<ScheduleSystem> {
                 move |keys: Res<ButtonInput<KeyCode>>,
                       mouse: Res<ButtonInput<MouseButton>>,
                       double_clicks: Res<DoubleClicks>,
+                      item_actions: Res<Assets<ItemAction>>,
                       player: Single<
                     (
                         Entity,
@@ -222,12 +234,14 @@ fn process_input_item_actions_schedule() -> ScheduleConfigs<ScheduleSystem> {
                             } => equipment_actions
                                 .main_hand()
                                 .get(current_main_hand_trigger)
+                                .and_then(|main_hand_action| item_actions.get(main_hand_action))
                                 .map(|main_hand_action| match main_hand_action.wield {
                                     ItemActionWield::Armor => unreachable!(),
                                     ItemActionWield::Hands(HandActionWield::Single) => trigger
                                         .and_then(|trigger| {
                                             equipment_actions.off_hand().get(trigger)
                                         })
+                                        .and_then(|action| item_actions.get(action))
                                         .map(|action| {
                                             matches!(
                                                 action.wield,
@@ -278,24 +292,27 @@ fn process_input_item_actions_schedule() -> ScheduleConfigs<ScheduleSystem> {
             ),
             With<Player>,
         >,
-         item_action_reg: Reg<ItemAction>,
-         initial_item_actions: Query<(&ItemStack, Option<&InitialItemActions>)>,
-         initial_item_actions_reg: Reg<InitialItemActions>| {
+         payload_manager: Res<PayloadManager>,
+         asset_server: Res<AssetServer>,
+         item_actions: Res<Assets<ItemAction>>,
+         item_initial_actions: Query<&InitialItemActions>| {
             let (inventory, selected_hotbar_slot, ref mut equipment_actions) = *player;
             update_equipment_slot_actions(
                 EquipmentSlot::MainHand,
                 inventory.main_hand(),
-                &item_action_reg,
-                initial_item_actions,
-                &initial_item_actions_reg,
+                &payload_manager,
+                &asset_server,
+                &item_actions,
+                item_initial_actions,
                 equipment_actions,
             );
             update_equipment_slot_actions(
                 EquipmentSlot::OffHand,
                 inventory.hotbar(selected_hotbar_slot.0),
-                &item_action_reg,
-                initial_item_actions,
-                &initial_item_actions_reg,
+                &payload_manager,
+                &asset_server,
+                &item_actions,
+                item_initial_actions,
                 equipment_actions,
             );
         },
@@ -317,26 +334,32 @@ pub struct OffHandSwapped;
 fn update_equipment_slot_actions(
     equipment_slot: EquipmentSlot,
     slot: Option<Entity>,
-    item_action_reg: &Reg<ItemAction>,
-    initial_item_actions: Query<(&ItemStack, Option<&InitialItemActions>)>,
-    initial_item_actions_reg: &Reg<InitialItemActions>,
+    payload_manager: &PayloadManager,
+    asset_server: &AssetServer,
+    item_actions: &Assets<ItemAction>,
+    item_initial_actions: Query<&InitialItemActions>,
     equipment_actions: &mut PlayerEquipmentItemActions,
 ) {
-    let slot_actions = equipment_actions.get_slot_mut(equipment_slot);
-    *slot_actions = ItemActions::default();
-    slot.and_then(|item| initial_item_actions.get(item).ok())
-        .and_then(|(item_stack, initial_item_actions)| {
-            initial_item_actions
-                .cloned()
-                .or_registry(&initial_item_actions_reg, item_stack.key())
-        })
+    let slot_action_slots = equipment_actions.get_slot_mut(equipment_slot);
+    *slot_action_slots = ItemActionSlots::default();
+    slot.and_then(|item| item_initial_actions.get(item).ok())
         .inspect(|initial_actions| {
             let item_action_slot = equipment_slot.item_action_slot();
             for trigger in [InteractionTrigger::DoubleClick, InteractionTrigger::Click] {
-                initial_actions
-                    .get(item_action_slot, trigger)
-                    .and_then(|action| item_action_reg.get(action))
-                    .inspect(|action| slot_actions.set(trigger, (*action).clone()));
+                if let Some(next_action) =
+                    initial_actions
+                        .get(item_action_slot, trigger)
+                        .and_then(|action| {
+                            resolve_handle(
+                                payload_manager,
+                                asset_server,
+                                item_actions,
+                                format!("item_actions/{}", action.path_string()),
+                            )
+                        })
+                {
+                    slot_action_slots.set(trigger, next_action);
+                }
             }
         });
 }
@@ -382,11 +405,11 @@ fn process_input_movement(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     window: Single<&Window, With<PrimaryWindow>>,
-    mut player: Single<(&Attributes, &mut TnuaController<Movements>), With<Player>>,
+    mut player: Single<(&Attributes<MovementSpeed>, &mut TnuaController<Movements>), With<Player>>,
     player_camera: Single<(&Camera, &PlayerCamera), With<PlayerCamera>>,
     active_overlay: Res<State<ActiveOverlay>>,
 ) {
-    let (attributes, ref mut controller) = *player;
+    let (movement_speed, ref mut controller) = *player;
     let forward = if pressed(&CONTROLS_MOVEMENT, &keys, &mouse)
         && let Some(physical_cursor_position) = window.physical_cursor_position()
         && matches!(**active_overlay, ActiveOverlay::HeadsUpDisplay)
@@ -417,7 +440,7 @@ fn process_input_movement(
     };
     controller.basis = TnuaBuiltinWalk {
         desired_motion: forward
-            .map(|direction| direction.as_vec3() * attributes.0[&embers::MOVEMENT_SPEED].value())
+            .map(|direction| direction.as_vec3() * movement_speed.value())
             .unwrap_or_default(),
         desired_forward: forward,
         ..default()
@@ -428,9 +451,7 @@ fn process_input_movement(
     {
         controller.action(Movements::Roll(TnuaBuiltinDash {
             displacement: forward
-                .map(|direction| {
-                    direction.as_vec3() * attributes.0[&embers::MOVEMENT_SPEED].value()
-                })
+                .map(|direction| direction.as_vec3() * movement_speed.value())
                 .unwrap_or_default(),
             desired_forward: forward,
             ..default()
@@ -443,7 +464,7 @@ pub static KEY: LazyLock<NamespacedKey> = LazyLock::new(|| NamespacedKey::new_em
 pub static UUID: LazyLock<Uuid> =
     LazyLock::new(|| Uuid::new_v5(&MOVEMENT_CONFIG_NAMESPACE, KEY.to_string().as_bytes()));
 
-#[derive(Component, Debug)]
+#[derive(Clone, Component, Default)]
 #[require(
     SelectedHotbarSlot,
     PlayerEntityInteractionStatus,
@@ -452,11 +473,7 @@ pub static UUID: LazyLock<Uuid> =
     PlayerEquipmentItemActions,
     PlayerInventory::new()
 )]
-pub struct Player {
-    pub flops: i32,
-    pub hashes: i32,
-    pub time_crystals: i32,
-}
+pub struct Player;
 
 pub const HOTBAR_SLOTS: InventorySlot = 6;
 
@@ -528,14 +545,14 @@ impl PlayerEntityInteractionStatus {
 }
 
 #[derive(Component, Default)]
-pub struct PlayerEntityInteractions(EntityInteractions);
+pub struct PlayerEntityInteractions(EntityInteractionSlots);
 
-impl ActionsComponent<EntityInteraction> for PlayerEntityInteractions {
+impl ActionSlotsComponent<EntityInteraction> for PlayerEntityInteractions {
     type Key = ();
-    fn get_actions(&self, _key: &Self::Key) -> &Actions<EntityInteraction> {
+    fn get_actions(&self, _key: &Self::Key) -> &ActionSlots<EntityInteraction> {
         &self.0
     }
-    fn get_actions_mut(&mut self, _key: &Self::Key) -> &mut Actions<EntityInteraction> {
+    fn get_actions_mut(&mut self, _key: &Self::Key) -> &mut ActionSlots<EntityInteraction> {
         &mut self.0
     }
 }
@@ -601,62 +618,58 @@ impl PlayerItemActionStatus {
 
 #[derive(Component, Default)]
 pub struct PlayerEquipmentItemActions {
-    main_hand: ItemActions,
-    off_hand: ItemActions,
-    armor: ItemActions,
+    main_hand: ItemActionSlots,
+    off_hand: ItemActionSlots,
+    armor: ItemActionSlots,
 }
 
-impl ActionsComponent<ItemAction> for PlayerEquipmentItemActions {
+impl ActionSlotsComponent<ItemAction> for PlayerEquipmentItemActions {
     type Key = EquipmentSlot;
     #[inline]
-    fn get_actions(&self, key: &Self::Key) -> &Actions<ItemAction> {
+    fn get_actions(&self, key: &Self::Key) -> &ActionSlots<ItemAction> {
         self.get_slot(*key)
     }
     #[inline]
-    fn get_actions_mut(&mut self, key: &Self::Key) -> &mut Actions<ItemAction> {
+    fn get_actions_mut(&mut self, key: &Self::Key) -> &mut ActionSlots<ItemAction> {
         self.get_slot_mut(*key)
     }
 }
 
 impl PlayerEquipmentItemActions {
-    pub fn get_slot(&self, slot: EquipmentSlot) -> &ItemActions {
+    pub fn get_slot(&self, slot: EquipmentSlot) -> &ItemActionSlots {
         match slot {
             EquipmentSlot::MainHand => &self.main_hand,
             EquipmentSlot::OffHand => &self.off_hand,
             EquipmentSlot::Armor => &self.armor,
         }
     }
-    pub fn get_slot_mut(&mut self, slot: EquipmentSlot) -> &mut ItemActions {
+    pub fn get_slot_mut(&mut self, slot: EquipmentSlot) -> &mut ItemActionSlots {
         match slot {
             EquipmentSlot::MainHand => &mut self.main_hand,
             EquipmentSlot::OffHand => &mut self.off_hand,
             EquipmentSlot::Armor => &mut self.armor,
         }
     }
-    pub fn main_hand(&self) -> &ItemActions {
+    pub fn main_hand(&self) -> &ItemActionSlots {
         &self.main_hand
     }
-    pub fn off_hand(&self) -> &ItemActions {
+    pub fn off_hand(&self) -> &ItemActionSlots {
         &self.off_hand
     }
-    pub fn armor(&self) -> &ItemActions {
+    pub fn armor(&self) -> &ItemActionSlots {
         &self.armor
     }
     pub fn clear_slot(&mut self, slot: EquipmentSlot) {
-        *self.get_slot_mut(slot) = ItemActions::default();
+        *self.get_slot_mut(slot) = ItemActionSlots::default();
     }
 }
 
-pub fn player(attribute_bases: &Registry<AttributeBase>) -> impl Bundle {
-    (
-        living_actor(&KEY, &UUID, attribute_bases, false),
-        Collider::cylinder(0.5, 1.7),
-        Player {
-            flops: 0,
-            hashes: 0,
-            time_crystals: 0,
-        },
-    )
+pub fn player() -> impl Scene {
+    bsn! {
+        living_actor(&KEY, false)
+        Collider::cylinder(0.5, 1.7)
+        Player
+    }
 }
 
 pub(in crate::dim) fn plugin(app: &mut App) {
