@@ -17,6 +17,7 @@ use bevy::log::tracing::span::Entered;
 use bevy::prelude::*;
 use std::fmt::Debug;
 use std::marker::PhantomData;
+use std::time::Duration;
 
 #[derive(Debug, Event)]
 pub enum Load {
@@ -389,7 +390,10 @@ fn trigger_instant_task_completion<T: LoadingTaskComponent>(
     let _entered = loading_span.enter();
     let &BeginTask(begin_task) = &*begin_task;
     if tasks.contains(begin_task) {
-        commands.trigger(InstantTaskCompletion::<T>(begin_task, PhantomData));
+        commands
+            .delayed()
+            .duration(Duration::ZERO)
+            .trigger(InstantTaskCompletion::<T>(begin_task, PhantomData));
     }
 }
 

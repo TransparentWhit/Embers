@@ -2,18 +2,17 @@ use super::{GameState, RootNode};
 use bevy::prelude::*;
 
 fn init(mut commands: Commands) {
-    commands.spawn((
-        RootNode,
-        DespawnOnExit(GameState::MainMenu),
-        Camera2d,
+    commands.spawn_scene(bsn! {
+        RootNode
+        DespawnOnExit::<GameState>(GameState::MainMenu)
+        Camera2d
         Node {
             width: percent(100),
             height: percent(100),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
-            ..default()
-        },
-    ));
+        }
+    });
 }
 
 fn fina() {}

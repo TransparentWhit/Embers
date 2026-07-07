@@ -24,7 +24,7 @@ use bevy_tnua::prelude::*;
 use derive_where::derive_where;
 use embers_macros::identify;
 use item::inv::{ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt};
-use item::{sword, tnt};
+use item::item_stack;
 use serde::{Deserialize, Serialize};
 use std::ops::Neg;
 use std::sync::{Arc, LazyLock};
@@ -118,11 +118,11 @@ fn handle_dimension_generation_request(
                 Transform::from_xyz(5.0, 0.5, 0.0)
             ),
             (
-                item_actor_of(sword())
+                item_actor_of(item_stack(item::embers::SWORD.clone()))
                 Transform::from_xyz(2.0, 1.0, 0.0)
             ),
             (
-                item_actor_of(tnt())
+                item_actor_of(item_stack(item::embers::TNT.clone()))
                 Transform::from_xyz(2.0, 1.0, 0.0)
             ),
         ]
@@ -195,8 +195,6 @@ impl From<Direction> for IVec3 {
         }
     }
 }
-
-type Physics = (CollisionLayers, Dominance, LockedAxes, RigidBody);
 
 const FREE: LockedAxes = LockedAxes::new();
 const LOCK_XZ_ROTATION: LockedAxes = LockedAxes::new().lock_rotation_x().lock_rotation_z();
@@ -662,15 +660,14 @@ pub static INTERACTION_GATEWAY_TRAVEL: LazyLock<NamespacedKey> =
     LazyLock::new(|| NamespacedKey::new_embers("gateway_travel"));
 
 pub fn gateway() -> impl Scene {
-    let physics = PhysicsPreset::Phantom.physics(true);
     bsn! {
         Gateway
-        physics
         Mesh3d(asset_value(Cuboid::new(3., 1., 3.).mesh().build()))
         MeshMaterial3d<StandardMaterial>(asset_value(StandardMaterial {
             base_color: Color::BLACK,
             ..default()
         }))
+        { PhysicsPreset::Phantom.physics(true) }
         Interactable {
             distance_factor: 1.,
             initial_click: { Some(INTERACTION_GATEWAY_TRAVEL.clone()) },

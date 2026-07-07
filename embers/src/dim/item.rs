@@ -5,14 +5,15 @@ use super::actor::primed_tnt::primed_tnt;
 use super::{Action, ActionSlots, CollisionLayer, exclude_source};
 use crate::input::InteractionTrigger;
 use crate::pld::{
-    Boxed, EMBERS_PAYLOAD_SOURCE_UUID, InjectedPayloads, Payloads, inject_embers_payload_batch,
-    inject_keyed_embers_payload_batch,
+    Boxed, EMBERS_PAYLOAD_SOURCE_UUID, InjectedPayloads, PayloadManager, Payloads,
+    inject_embers_payload_batch, inject_keyed_embers_payload_batch, resolve_payload,
 };
 use crate::utils::physics::section;
 use crate::utils::{DynCmp, DynPartialCmp, Keyed, NamespacedKey};
 use anyhow::Error;
 use avian3d::prelude::*;
 use bevy::ecs::system::{StaticSystemParam, SystemParam};
+use bevy::ecs::template::TemplateContext;
 use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
 use bevy::reflect::DynamicTypePath;
@@ -50,7 +51,7 @@ static DEFAULT_ITEM_KEY: LazyLock<NamespacedKey> =
 impl Default for ItemStack {
     fn default() -> Self {
         warn!("An default item stack is used! This is likely an error.");
-        Self::new(DEFAULT_ITEM_KEY.clone())
+        Self(DEFAULT_ITEM_KEY.clone())
     }
 }
 
@@ -63,6 +64,38 @@ impl Keyed for ItemStack {
 impl ItemStack {
     pub fn new(key: NamespacedKey) -> Self {
         Self(key)
+    }
+}
+
+struct ItemStackTemplate {
+    key: NamespacedKey,
+}
+
+impl Default for ItemStackTemplate {
+    fn default() -> Self {
+        Self {
+            key: DEFAULT_ITEM_KEY.clone(),
+        }
+    }
+}
+
+impl Template for ItemStackTemplate {
+    type Output = ItemStack;
+    fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
+        for component in context
+            .resource::<Assets<BoxedItemComponent>>()
+            .iter()
+            .map(|(_id, component)| component.dyn_clone())
+            .collect::<Box<[_]>>()
+        {
+            component.insert_prototype(context.entity, &self.key);
+        }
+        Ok(ItemStack(self.key.clone()))
+    }
+    fn clone_template(&self) -> Self {
+        Self {
+            key: self.key.clone(),
+        }
     }
 }
 
@@ -81,7 +114,8 @@ pub trait ItemComponent:
 {
     fn dyn_clone(&self) -> Box<dyn ItemComponent>;
     fn clear_prototypes(&self, world: &mut DeferredWorld);
-    fn insert_prototype(&self, world: &mut DeferredWorld, item: NamespacedKey, prototype: Value);
+    fn inject_prototype(&self, world: &mut DeferredWorld, item: &NamespacedKey, prototype: Value);
+    fn insert_prototype(&self, item_stack: &mut EntityWorldMut, item: &NamespacedKey);
 }
 
 #[derive(TypePath)]
@@ -92,19 +126,21 @@ pub type BoxedItemComponent = Boxed<DynItemComponent, dyn ItemComponent>;
 
 #[derive_where(Clone)]
 #[derive(TypePath)]
-pub struct StandardItemComponent<C: Component + for<'de> Deserialize<'de> + Eq + TypePath> {
+pub struct StandardItemComponent<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypePath> {
     source_uuid: Uuid,
     key: NamespacedKey,
     _marker: PhantomData<fn() -> C>,
 }
 
-impl<C: Component + for<'de> Deserialize<'de> + Eq + TypePath> Keyed for StandardItemComponent<C> {
+impl<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypePath> Keyed
+    for StandardItemComponent<C>
+{
     fn key(&self) -> &NamespacedKey {
         &self.key
     }
 }
 
-impl<C: Component + for<'de> Deserialize<'de> + Eq + TypePath>
+impl<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypePath>
     DynPartialCmp<EntityRef<'_>, EntityRef<'_>> for StandardItemComponent<C>
 {
     fn dyn_eq(&self, lhs: EntityRef<'_>, rhs: EntityRef<'_>) -> bool {
@@ -116,12 +152,12 @@ impl<C: Component + for<'de> Deserialize<'de> + Eq + TypePath>
     }
 }
 
-impl<C: Component + for<'de> Deserialize<'de> + Eq + TypePath> DynCmp<EntityRef<'_>>
+impl<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypePath> DynCmp<EntityRef<'_>>
     for StandardItemComponent<C>
 {
 }
 
-impl<C: Component + for<'de> Deserialize<'de> + Eq + TypePath> StandardItemComponent<C> {
+impl<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypePath> StandardItemComponent<C> {
     pub fn new(source_uuid: Uuid, key: NamespacedKey) -> BoxedItemComponent {
         BoxedItemComponent::new_boxed(Box::new(Self {
             source_uuid,
@@ -135,7 +171,7 @@ impl<C: Component + for<'de> Deserialize<'de> + Eq + TypePath> StandardItemCompo
     }
 }
 
-impl<C: Component + for<'de> Deserialize<'de> + Eq + TypePath> ItemComponent
+impl<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypePath> ItemComponent
     for StandardItemComponent<C>
 {
     fn dyn_clone(&self) -> Box<dyn ItemComponent> {
@@ -146,7 +182,7 @@ impl<C: Component + for<'de> Deserialize<'de> + Eq + TypePath> ItemComponent
             .resource_mut::<Assets<ItemComponentPrototype<C>>>()
             .clear();
     }
-    fn insert_prototype(&self, world: &mut DeferredWorld, item: NamespacedKey, value: Value) {
+    fn inject_prototype(&self, world: &mut DeferredWorld, item: &NamespacedKey, value: Value) {
         let resource_entities = world.resource_entities();
         let [mut prototypes, mut injected_payloads] = world.entity_mut([
             resource_entities
@@ -166,9 +202,19 @@ impl<C: Component + for<'de> Deserialize<'de> + Eq + TypePath> ItemComponent
             .inject(
                 &mut injected_payloads.get_mut::<InjectedPayloads>().unwrap(),
                 self.source_uuid,
-                format!("item_component_pro/{}", item.path_string()),
+                format!("item_component_prototypes/{}", item.path_string()),
                 ItemComponentPrototype(C::deserialize(value).unwrap()),
             );
+    }
+    fn insert_prototype(&self, item_stack: &mut EntityWorldMut, item: &NamespacedKey) {
+        if let Some(ItemComponentPrototype(prototype)) = resolve_payload(
+            item_stack.resource::<PayloadManager>(),
+            item_stack.resource::<AssetServer>(),
+            item_stack.resource::<Assets<ItemComponentPrototype<C>>>(),
+            item,
+        ) {
+            item_stack.insert(prototype.clone());
+        }
     }
 }
 
@@ -360,16 +406,8 @@ impl Action for ItemAction {
     }
 }
 
-pub fn sword() -> impl Bundle + Clone {
-    ItemStack(embers::SWORD.clone())
-}
-
-pub fn spear() -> impl Bundle + Clone {
-    ItemStack(embers::SPEAR.clone())
-}
-
-pub fn tnt() -> impl Bundle + Clone {
-    ItemStack(embers::TNT.clone())
+pub fn item_stack(key: NamespacedKey) -> impl Scene {
+    template_value(ItemStackTemplate { key })
 }
 
 pub(super) fn plugin(app: &mut App) {

@@ -442,7 +442,7 @@ fn reload_metadata_plugin(app: &mut App) {
                             Some(item_component) => {
                                 item_component
                                     .dyn_clone()
-                                    .insert_prototype(&mut world, item, prototype);
+                                    .inject_prototype(&mut world, &item, prototype);
                             }
                             None => error!(
                                 "Unknown item component key in prototype '{}': {}",

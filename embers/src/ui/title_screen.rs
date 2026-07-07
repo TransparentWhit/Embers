@@ -5,7 +5,7 @@ use crate::pld::ui_image_node;
 use bevy::color::palettes::css::WHITE;
 use bevy::input_focus::tab_navigation::{TabGroup, TabIndex};
 use bevy::prelude::*;
-use bevy::ui::InteractionDisabled;
+use bevy::ui::auto_directional_navigation::AutoDirectionalNavigation;
 
 fn init(mut commands: Commands, root_node: Single<Entity, With<RootNode>>) {
     commands.spawn_scene(bsn! {
@@ -41,19 +41,21 @@ fn init(mut commands: Commands, root_node: Single<Entity, With<RootNode>>) {
                         text_button("Play", |_interaction: On<NodeInteraction>, mut commands: Commands| {
                             commands.trigger(Load::EnterDimension(DimensionEntryContext::EnterWorld, embers::LOBBY.clone()));
                         })
+                        AutoDirectionalNavigation
                         TabIndex(0)
                     ),
                     (
                         text_button("Options", |_interaction: On<NodeInteraction>, mut next_overlay: ResMut<NextState<ActiveOverlay>>| {
                             next_overlay.set(ActiveOverlay::OptionsMain);
                         })
+                        AutoDirectionalNavigation
                         TabIndex(1)
                     ),
                     (
                         text_button("Quit", |_interaction: On<NodeInteraction>, mut app_exit_writer: MessageWriter<AppExit>| {
                             app_exit_writer.write(AppExit::Success);
                         })
-                        InteractionDisabled
+                        AutoDirectionalNavigation
                         TabIndex(2)
                     ),
                 ]

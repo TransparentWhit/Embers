@@ -5,7 +5,7 @@ pub mod meta;
 
 use crate::path;
 use crate::ui::{AnimatedTexture, TextureAnimation, TextureScaling};
-use crate::utils::{Keyed, NamespacedKey, RemoveComponentTemplate, UniquelyIdentified};
+use crate::utils::{Keyed, NamespacedKey, UniquelyIdentified, remove_bundle};
 use atomicow::CowArc;
 use bevy::app::App;
 use bevy::asset::io::AssetSourceId;
@@ -1001,6 +1001,7 @@ pub fn block_texture(
 struct ImageNodeTemplate {
     image: PayloadTemplate<Image>,
     atlas: OptionalPayloadTemplate<TextureAtlasLayout>,
+    animation: OptionalPayloadTemplate<TextureAnimation>,
     scaling: OptionalPayloadTemplate<TextureScaling>,
 }
 
@@ -1020,48 +1021,25 @@ impl Template for ImageNodeTemplate {
                 .unwrap_or(NodeImageMode::Stretch),
         );
         node.texture_atlas = self.atlas.build_template(context)?.map(TextureAtlas::from);
+        if let Some(animation) = self.animation.build_template(context).ok().flatten() {
+            context.entity.insert(AnimatedTexture::new(
+                context
+                    .resource::<Assets<TextureAnimation>>()
+                    .get(&animation)
+                    .unwrap()
+                    .clone(),
+            ));
+        } else {
+            context.entity.remove::<AnimatedTexture>();
+        }
         Ok(node)
     }
     fn clone_template(&self) -> Self {
         Self {
             image: self.image.clone_template(),
             atlas: self.atlas.clone_template(),
-            scaling: self.scaling.clone_template(),
-        }
-    }
-}
-
-#[derive(Default)]
-struct TextureAnimationTemplate {
-    animation: OptionalPayloadTemplate<TextureAnimation>,
-}
-
-#[derive(Debug, Error)]
-#[error("Texture animation was not found")]
-struct TextureAnimationNotFoundError;
-
-impl Template for TextureAnimationTemplate {
-    type Output = AnimatedTexture;
-    fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
-        self.animation
-            .build_template(context)
-            .and_then(|animation| match animation {
-                Some(animation) => Ok(AnimatedTexture::new(
-                    context
-                        .resource::<Assets<TextureAnimation>>()
-                        .get(&animation)
-                        .unwrap()
-                        .clone(),
-                )),
-                None => Err(BevyError::ignore(TextureAnimationNotFoundError)),
-            })
-            .inspect_err(|_error| {
-                context.entity.remove::<AnimatedTexture>();
-            })
-    }
-    fn clone_template(&self) -> Self {
-        Self {
             animation: self.animation.clone_template(),
+            scaling: self.scaling.clone_template(),
         }
     }
 }
@@ -1070,17 +1048,13 @@ impl Template for TextureAnimationTemplate {
 fn image_node<'path>(path: impl Into<AssetPath<'path>>) -> impl Scene {
     let TemplateTuple((image, atlas, animation, scaling)) = rich_image(path);
     bsn! {
-        template_value(ImageNodeTemplate { image, atlas, scaling })
-        //template_value(TextureAnimationTemplate { animation })
+        template_value(ImageNodeTemplate { image, atlas, animation, scaling })
     }
 }
 
 #[inline]
 pub fn empty_image_node() -> impl Scene {
-    bsn! {
-        template_value(RemoveComponentTemplate::<ImageNode>::new())
-        template_value(RemoveComponentTemplate::<AnimatedTexture>::new())
-    }
+    remove_bundle::<(ImageNode, AnimatedTexture)>()
 }
 
 #[inline]

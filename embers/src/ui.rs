@@ -14,16 +14,18 @@ use crate::utils::NamespacedKey;
 use bevy::color::palettes::css::WHITE;
 use bevy::ecs::system::{IntoObserverSystem, NonSendMarker, ObserverSystem};
 use bevy::input_focus::{FocusGained, FocusLost, InputFocus};
+use bevy::math::CompassOctant;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui::InteractionDisabled;
+use bevy::ui::auto_directional_navigation::AutoDirectionalNavigator;
 use bevy::window::PrimaryWindow;
 use bevy::winit::WINIT_WINDOWS;
 use serde::Deserialize;
 use std::sync::LazyLock;
 use winit::window::Icon;
 
-#[derive(Component)]
+#[derive(Clone, Component, Default)]
 pub struct RootNode;
 
 #[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
@@ -74,6 +76,23 @@ fn process_escaping(
     }
 }
 
+fn process_directional_navigation(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut navigator: AutoDirectionalNavigator,
+) {
+    let Some(direction) = Dir2::from_xy(
+        (keys.just_pressed(KeyCode::ArrowRight) as i8 - keys.just_pressed(KeyCode::ArrowLeft) as i8)
+            as f32,
+        (keys.just_pressed(KeyCode::ArrowUp) as i8 - keys.just_pressed(KeyCode::ArrowDown) as i8)
+            as f32,
+    )
+    .ok()
+    .map(CompassOctant::from) else {
+        return;
+    };
+    let _result = navigator.navigate(direction);
+}
+
 #[derive(Clone, Debug, EntityEvent, PartialEq)]
 pub struct NodeInteraction<Ext: Send + Sync + 'static = ()> {
     pub entity: Entity,
@@ -85,9 +104,6 @@ impl<Ext: Send + Sync + 'static> NodeInteraction<Ext> {
         Self { entity, extra }
     }
 }
-
-#[derive(Clone, Debug, EntityEvent, PartialEq)]
-pub struct RefreshWidgetStatus(Entity);
 
 fn trigger_default_node_interaction(
     mut commands: Commands,
@@ -337,6 +353,7 @@ pub(super) fn plugin(app: &mut App) {
         .init_asset::<TextureScaling>()
         .insert_resource(UiScale(3.))
         .add_systems(PreUpdate, process_escaping)
+        .add_systems(PreUpdate, process_directional_navigation)
         .add_systems(Update, trigger_default_node_interaction)
         .add_systems(Update, run_animations)
         .add_systems(Update, set_window_icons)

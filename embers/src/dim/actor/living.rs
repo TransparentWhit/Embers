@@ -10,6 +10,7 @@ use crate::utils::NamespacedKey;
 use attributes::{Attributes, AttributesTemplate, MaxHealth};
 use bevy::ecs::template::TemplateContext;
 use bevy::prelude::*;
+use bevy::scene::SceneFunction;
 use bevy_tnua::prelude::*;
 
 #[derive(Component, Debug, Default)]
@@ -49,6 +50,10 @@ impl FromTemplate for Health {
 }
 
 #[derive(Default)]
+/// # Note
+/// HealthTemplate depends on [`AttributesTemplate`], which is a bundle template, so HealthTemplate
+/// has to be used as a bundle template as well, as bundle templates are applied after component
+/// templates.
 pub struct HealthTemplate;
 
 impl Template for HealthTemplate {
@@ -68,11 +73,18 @@ impl Template for HealthTemplate {
 }
 
 pub fn living_actor(key: &NamespacedKey, interactable: bool) -> impl Scene {
+    let key_cloned = key.clone();
+    let attributes = SceneFunction(move |_scene_context, resolved| {
+        resolved.push_bundle_template(AttributesTemplate::new(key_cloned.clone()));
+    });
+    let health = SceneFunction(move |_scene_context, resolved| {
+        resolved.push_bundle_template(HealthTemplate);
+    });
     bsn! {
         actor()
         { PhysicsPreset::LivingActor.physics(interactable) }
-        template_value(AttributesTemplate::new(key.clone()))
-        Health
+        attributes
+        health
         template(|_| Ok(TnuaController::<Movements>::default()))
         template_value(MovementConfigTemplate::new(key))
     }

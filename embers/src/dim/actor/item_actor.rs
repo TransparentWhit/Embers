@@ -1,42 +1,17 @@
-use crate::dim::actor::actor;
+use super::actor;
 use crate::dim::{Interactable, PhysicsPreset};
 use crate::pld::default_scene;
-use crate::utils::{NamespacedKey, Void};
+use crate::utils::NamespacedKey;
 use avian3d::prelude::*;
-use bevy::ecs::relationship::Relationship;
-use bevy::ecs::spawn::SpawnableList;
 use bevy::prelude::*;
-use bevy::ptr::{MovingPtr, deconstruct_moving_ptr};
 use std::sync::LazyLock;
-use thiserror::Error;
 
 pub static KEY: LazyLock<NamespacedKey> = LazyLock::new(|| NamespacedKey::new_embers("item"));
 
 pub static INTERACTION_PICKUP: LazyLock<NamespacedKey> =
     LazyLock::new(|| NamespacedKey::new_embers("item_actor/pickup"));
 
-// TODO rework items
-// TODO Apply item component prototypes when item is spawned
-
-#[derive(Component)]
-struct SpawnItem<C: Bundle>(C);
-
-impl<R: Relationship, C: Bundle> SpawnableList<R> for SpawnItem<C> {
-    fn spawn(this: MovingPtr<'_, Self>, world: &mut World, parent: Entity) {
-        deconstruct_moving_ptr!({
-            let SpawnItem { 0: item_bundle } = this;
-        });
-        let item_id = world.spawn((R::from(parent), item_bundle.read())).id();
-        if let Ok(mut item_actor) = world.get_entity_mut(parent) {
-            item_actor.insert(ItemActor(item_id));
-        }
-    }
-    fn size_hint(&self) -> usize {
-        1
-    }
-}
-
-#[derive(Clone, Component, Copy, Debug)]
+#[derive(Clone, Component, Copy, Debug, FromTemplate)]
 pub struct ItemActor(pub Entity);
 
 impl Default for ItemActor {
@@ -67,16 +42,15 @@ pub fn item_actor_for(item: Entity) -> impl Scene {
     }
 }
 
-#[derive(Debug, Error)]
-#[error("")]
-struct TmpError;
-
-pub fn item_actor_of(item: impl Bundle + Clone) -> impl Scene {
+pub fn item_actor_of(item: impl Scene) -> impl Scene {
     bsn! {
         item_actor()
-        template(move |context| {
-            context.entity.insert(Children::spawn(SpawnItem(item.clone())));
-            Err::<Void, BevyError>(BevyError::ignore(TmpError))
-        })
+        ItemActor(#ItemStack)
+        Children [
+            (
+                #ItemStack
+                item
+            ),
+        ]
     }
 }

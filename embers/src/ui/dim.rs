@@ -4,62 +4,64 @@ use bevy::camera::{ScalingMode, Viewport};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowResized};
-use std::ops::DerefMut;
 
-#[derive(Component)]
+#[derive(Clone, Component, Default)]
 pub struct DimensionRootNode;
 
-#[derive(Component, Debug)]
+#[derive(Clone, Component, Debug)]
 pub enum PlayerCamera {
     Isometric {
         distance: f32,
         height: f32,
-        /// **In radians**
-        angle: f32,
+        angle_rad: f32,
     },
 }
 
+impl Default for PlayerCamera {
+    fn default() -> Self {
+        Self::Isometric {
+            distance: 12.,
+            height: 8.,
+            angle_rad: 35f32.to_radians(),
+        }
+    }
+}
+
 fn init(mut commands: Commands) {
-    commands.spawn((
-        RootNode,
-        DespawnOnExit(GameState::Dimension),
-        Transform::default(),
+    commands.spawn_scene(bsn! {
+        RootNode
+        DespawnOnExit<GameState>(GameState::Dimension)
+        Transform
         Node {
             width: percent(100),
             height: percent(100),
             display: Display::Flex,
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
-            ..default()
-        },
-        children![
+        }
+        Children [
             (
-                DimensionRootNode,
+                DimensionRootNode
                 Node {
                     width: percent(100),
                     height: percent(100),
-                    ..default()
-                },
+                }
             ),
             (
-                Camera::default(),
-                Camera3d::default(),
-                Bloom::default(),
-                Projection::from(OrthographicProjection {
+                Camera
+                Camera3d
+                PlayerCamera
+                Projection::from({OrthographicProjection {
                     scaling_mode: ScalingMode::Fixed {
                         width: 16.,
                         height: 9.,
                     },
                     ..OrthographicProjection::default_3d()
-                }),
-                PlayerCamera::Isometric {
-                    distance: 12.,
-                    height: 8.,
-                    angle: 35f32.to_radians(),
-                },
+                }})
+                Bloom
             ),
-        ],
-    ));
+        ]
+    });
 }
 
 fn resize_camera(
@@ -92,11 +94,15 @@ fn update_player_camera(
         PlayerCamera::Isometric {
             distance,
             height,
-            angle,
+            angle_rad,
         } => {
             let player_pos = player.translation;
-            camera_transform.translation =
-                player_pos + Vec3::new(distance * angle.cos(), *height, distance * angle.sin());
+            camera_transform.translation = player_pos
+                + Vec3::new(
+                    distance * angle_rad.cos(),
+                    *height,
+                    distance * angle_rad.sin(),
+                );
             camera_transform.look_at(player_pos, Vec3::Y);
         }
     }

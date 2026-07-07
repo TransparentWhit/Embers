@@ -419,7 +419,7 @@ fn process_input_movement(
             PlayerCamera::Isometric {
                 distance,
                 height,
-                angle,
+                angle_rad: angle,
             } => {
                 let viewport = camera.viewport.clone().unwrap_or_default();
                 let normalized = (physical_cursor_position - viewport.physical_position.as_vec2())

@@ -6,18 +6,17 @@ pub mod pld;
 pub mod ui;
 pub mod utils;
 
-use avian3d::PhysicsPlugins;
-use avian3d::prelude::PhysicsSchedule;
-use bevy::DefaultPlugins;
+use avian3d::prelude::*;
 use bevy::asset::UnapprovedPathMode;
 use bevy::image::ImageSamplerDescriptor;
+use bevy::input_focus::directional_navigation::DirectionalNavigationPlugin;
 use bevy::input_focus::tab_navigation::TabNavigationPlugin;
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use bevy::window::WindowTheme;
 use bevy_sprinkles::prelude::*;
-use bevy_tnua::prelude::TnuaControllerPlugin;
-use bevy_tnua_avian3d::TnuaAvian3dPlugin;
+use bevy_tnua::prelude::*;
+use bevy_tnua_avian3d::prelude::*;
 use dim::{Movements, SourceExclusionCollisionHooks};
 use std::env::current_exe;
 use std::path::{Path, PathBuf};
@@ -100,6 +99,7 @@ fn main() {
                 ..default()
             }),
     )
+    .add_plugins(DirectionalNavigationPlugin)
     .add_plugins(PhysicsPlugins::default().with_collision_hooks::<SourceExclusionCollisionHooks>())
     .add_plugins(SprinklesPlugin)
     .add_plugins(TabNavigationPlugin)

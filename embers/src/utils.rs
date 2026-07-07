@@ -1,14 +1,11 @@
 pub mod physics;
 
 use bevy::asset::AssetPath;
-use bevy::ecs::template::TemplateContext;
 use bevy::prelude::*;
-use derive_where::derive_where;
+use bevy::scene::SceneFunction;
 use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::any::type_name;
 use std::fmt;
-use std::marker::PhantomData;
 use std::path::Path;
 use std::result::Result;
 use std::str::FromStr;
@@ -370,39 +367,13 @@ impl TextureAtlasManifest {
     }
 }
 
-#[derive_where(Default)]
-pub struct RemoveComponentTemplate<C: Component> {
-    _marker: PhantomData<fn() -> C>,
-}
-
-impl<C: Component> RemoveComponentTemplate<C> {
-    pub fn new() -> Self {
-        Self {
-            _marker: PhantomData,
-        }
-    }
-}
-
-#[derive_where(Debug)]
-#[derive(Error)]
-#[error("Component `{}` was removed", type_name::<C>())]
-struct ComponentRemoved<C: Component> {
-    _marker: PhantomData<fn() -> C>,
-}
-
-impl<C: Component> Template for RemoveComponentTemplate<C> {
-    type Output = Void;
-    fn build_template(&self, context: &mut TemplateContext) -> bevy::prelude::Result<Self::Output> {
-        context.entity.remove::<C>();
-        Err(BevyError::ignore(ComponentRemoved::<C> {
-            _marker: PhantomData,
+pub fn remove_bundle<B: Bundle>() -> impl Scene {
+    SceneFunction(|_scene_context, resolved| {
+        resolved.push_bundle_template(template(|template_context| {
+            template_context.entity.remove::<B>();
+            Ok(())
         }))
-    }
-    fn clone_template(&self) -> Self {
-        Self {
-            _marker: PhantomData,
-        }
-    }
+    })
 }
 
 #[cfg(test)]

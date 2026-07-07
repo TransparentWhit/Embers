@@ -1,5 +1,5 @@
 use crate::pld::{Boxed, PayloadManager, inject_keyed_embers_payload_batch, resolve_payload};
-use crate::utils::{Keyed, NamespacedKey, Void};
+use crate::utils::{Keyed, NamespacedKey};
 use bevy::ecs::template::TemplateContext;
 use bevy::prelude::*;
 use derive_where::derive_where;
@@ -7,7 +7,6 @@ use embers_macros::identify;
 use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 use std::sync::LazyLock;
-use thiserror::Error;
 
 pub trait Attribute: Keyed + Send + Sync + 'static {
     fn dyn_clone(&self) -> Box<dyn Attribute>;
@@ -44,9 +43,7 @@ impl<A: 'static> Attribute for StandardAttribute<A> {
                 entity.resource::<Assets<AttributeBase>>(),
                 format!("attribute_bases/{}", self.key.path_string()),
             )
-            .unwrap()
-            .0
-            .get(actor_key)
+            .and_then(|base| base.0.get(actor_key))
             {
                 Some(base) => Attributes::<Self>::new(*base),
                 None => Attributes::new_virtual(),
@@ -161,12 +158,8 @@ impl AttributesTemplate {
     }
 }
 
-#[derive(Debug, Error)]
-#[error("Attributes have been inserted")]
-struct AttributesInserted;
-
 impl Template for AttributesTemplate {
-    type Output = Void;
+    type Output = ();
     fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
         for attribute in context
             .resource::<Assets<BoxedAttribute>>()
@@ -176,7 +169,7 @@ impl Template for AttributesTemplate {
         {
             attribute.insert_attribute(context.entity, &self.actor_key);
         }
-        Err(BevyError::ignore(AttributesInserted))
+        Ok(())
     }
     fn clone_template(&self) -> Self {
         Self {
