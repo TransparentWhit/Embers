@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowResized};
 
 #[derive(Clone, Component, Default)]
-pub struct DimensionRootNode;
+pub struct DimensionViewNode;
 
 #[derive(Clone, Component, Debug)]
 pub enum PlayerCamera {
@@ -29,6 +29,7 @@ impl Default for PlayerCamera {
 
 fn init(mut commands: Commands) {
     commands.spawn_scene(bsn! {
+        #DimensionNode
         RootNode
         DespawnOnExit<GameState>(GameState::Dimension)
         Transform
@@ -41,7 +42,8 @@ fn init(mut commands: Commands) {
         }
         Children [
             (
-                DimensionRootNode
+                #DimensionViewNode
+                DimensionViewNode
                 Node {
                     width: percent(100),
                     height: percent(100),

@@ -83,10 +83,14 @@ fn handle_dimension_generation_request(
 ) {
     let DimensionGenerationRequest(key) = &*request;
     commands.spawn_scene(bsn! {
+        #Dimension
         ChildOf({*root_node})
         Dimension({key.clone()})
+        Transform
+        Visibility
         Children [
             (
+                #Sol
                 DirectionalLight
                 template_value(Transform::from_translation(Vec3::ONE).looking_at(Vec3::ZERO, Vec3::Y))
             ),
@@ -99,6 +103,7 @@ fn handle_dimension_generation_request(
             ),
             gateway(),
             (
+                #Player
                 Mesh3d(
                     asset_value(
                         Cylinder {
@@ -114,6 +119,7 @@ fn handle_dimension_generation_request(
                 LinearVelocity::from(Vec3::new(0., 10., 0.))
             ),
             (
+                #Dummy
                 dummy()
                 Transform::from_xyz(5.0, 0.5, 0.0)
             ),
@@ -353,6 +359,8 @@ pub trait Action: Asset + Clone + Keyed {
         duration: Option<Duration>,
     ) -> Option<NamespacedKey>;
     fn duration(&self) -> Duration;
+    // TODO move this logic to pld
+    fn path(key: &NamespacedKey) -> String;
 }
 
 #[derive(Eq, PartialEq, Clone)]
@@ -458,13 +466,12 @@ fn update_action<
     //let environment = environment.into_inner();
     trigger.take_if(|active_trigger| {
         let interrupted = interruptions.read().any(|event| {
-            event.agent_entity == agent_entity
-            /*&& actions.is_tagged(
-                &event.interruption,
-                slots
-                    .get(*active_trigger)
-                    .expect("Should not be performing nonexistent action")
-                    .key(),
+            event.agent_entity == agent_entity && false /*actions.is_tagged(
+            &event.interruption,
+            slots
+            .get(*active_trigger)
+            .expect("Should not be performing nonexistent action")
+            .key(),
             )*/ // TODO tags
         });
         interruptions.clear();
@@ -509,7 +516,7 @@ fn update_action<
                                     &payload_manager,
                                     &asset_server,
                                     &actions,
-                                    format!("entity_interactions/{}", new_action.path_string()),
+                                    A::path(&new_action),
                                 )
                             })
                         {
@@ -537,14 +544,14 @@ fn update_action<
                             &mut environment,
                             object
                                 .expect("Action should not be performed on a nonexistent object."),
-                            Some(timer.elapsed()).take_if(|used| action.duration() >= *used),
+                            Some(timer.elapsed()).filter(|used| action.duration() >= *used),
                         )
                         .and_then(|new_action| {
                             resolve_handle(
                                 &payload_manager,
                                 &asset_server,
                                 &actions,
-                                format!("entity_interactions/{}", new_action.path_string()),
+                                A::path(&new_action),
                             )
                         })
                     {
@@ -624,6 +631,9 @@ impl Action for EntityInteraction {
     fn duration(&self) -> Duration {
         self.duration
     }
+    fn path(key: &NamespacedKey) -> String {
+        format!("entity_interactions/{}", key.path_string())
+    }
 }
 
 #[derive(Component, Clone, Debug, Default, PartialEq)]
@@ -661,6 +671,7 @@ pub static INTERACTION_GATEWAY_TRAVEL: LazyLock<NamespacedKey> =
 
 pub fn gateway() -> impl Scene {
     bsn! {
+        #Gateway
         Gateway
         Mesh3d(asset_value(Cuboid::new(3., 1., 3.).mesh().build()))
         MeshMaterial3d<StandardMaterial>(asset_value(StandardMaterial {

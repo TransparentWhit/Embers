@@ -41,9 +41,9 @@ impl<A: 'static> Attribute for StandardAttribute<A> {
                 entity.resource::<PayloadManager>(),
                 entity.resource::<AssetServer>(),
                 entity.resource::<Assets<AttributeBase>>(),
-                format!("attribute_bases/{}", self.key.path_string()),
+                format!("attribute_bases/{}", actor_key.path_string()),
             )
-            .and_then(|base| base.0.get(actor_key))
+            .and_then(|base| base.0.get(&self.key))
             {
                 Some(base) => Attributes::<Self>::new(*base),
                 None => Attributes::new_virtual(),

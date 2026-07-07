@@ -1,11 +1,11 @@
-use super::dim::DimensionRootNode;
+use super::dim::DimensionViewNode;
 use super::{ActiveOverlay, text};
 use bevy::color::palettes::basic::WHITE;
 use bevy::prelude::*;
 
-fn init(mut commands: Commands, dimension_root_node: Single<Entity, With<DimensionRootNode>>) {
+fn init(mut commands: Commands, dimension_view_node: Single<Entity, With<DimensionViewNode>>) {
     commands.spawn_scene(bsn! {
-        ChildOf({*dimension_root_node})
+        ChildOf({*dimension_view_node})
         DespawnOnExit<ActiveOverlay>(ActiveOverlay::GatewayMenu)
         text("Gateway", WHITE, 20.)
     });

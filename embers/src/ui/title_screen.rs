@@ -9,6 +9,7 @@ use bevy::ui::auto_directional_navigation::AutoDirectionalNavigation;
 
 fn init(mut commands: Commands, root_node: Single<Entity, With<RootNode>>) {
     commands.spawn_scene(bsn! {
+        #TitleScreen
         ChildOf({*root_node})
         DespawnOnExit<ActiveOverlay>(ActiveOverlay::TitleScreen)
         Node {
@@ -28,6 +29,7 @@ fn init(mut commands: Commands, root_node: Single<Entity, With<RootNode>>) {
                 }
                 Children [
                     (
+                        #Title
                         Node {
                             width: px(256),
                             height: px(64),
@@ -38,6 +40,7 @@ fn init(mut commands: Commands, root_node: Single<Entity, With<RootNode>>) {
                         })
                     ),
                     (
+                        #PlayButton
                         text_button("Play", |_interaction: On<NodeInteraction>, mut commands: Commands| {
                             commands.trigger(Load::EnterDimension(DimensionEntryContext::EnterWorld, embers::LOBBY.clone()));
                         })
@@ -45,6 +48,7 @@ fn init(mut commands: Commands, root_node: Single<Entity, With<RootNode>>) {
                         TabIndex(0)
                     ),
                     (
+                        #OptionsButton
                         text_button("Options", |_interaction: On<NodeInteraction>, mut next_overlay: ResMut<NextState<ActiveOverlay>>| {
                             next_overlay.set(ActiveOverlay::OptionsMain);
                         })
@@ -52,6 +56,7 @@ fn init(mut commands: Commands, root_node: Single<Entity, With<RootNode>>) {
                         TabIndex(1)
                     ),
                     (
+                        #QuitButton
                         text_button("Quit", |_interaction: On<NodeInteraction>, mut app_exit_writer: MessageWriter<AppExit>| {
                             app_exit_writer.write(AppExit::Success);
                         })
@@ -61,6 +66,7 @@ fn init(mut commands: Commands, root_node: Single<Entity, With<RootNode>>) {
                 ]
             ),
             (
+                #VersionLabel
                 Node {
                     bottom: px(-3),
                     left: px(2),

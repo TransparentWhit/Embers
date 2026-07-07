@@ -233,13 +233,13 @@ fn begin_loading(
                 commands.spawn_scene(bsn! {
                     DimensionGenerationTask({dimension_key.clone()})
                     TaskDependencies [
-                        ReloadMetadataTask
+                        GameStateTransitionTask(GameState::Dimension)
                         TaskDependencies [
-                            FetchPayloadScopeTask({PayloadScopeId::Dimension(dimension_key.clone())})
+                            ReloadMetadataTask
                             TaskDependencies [
-                                GameStateTransitionTask(GameState::Dimension),
-                            ],
-                        ],
+                                FetchPayloadScopeTask({PayloadScopeId::Dimension(dimension_key.clone())})
+                            ]
+                        ]
                     ]
                 });
             }
@@ -414,6 +414,7 @@ struct LoadingScreenSettings {
 
 fn init(mut commands: Commands, mut settings: ResMut<LoadingScreenSettings>) {
     commands.spawn_scene(bsn! {
+        #LoadingScreen
         DespawnOnExit<ActiveOverlay>(ActiveOverlay::LoadingScreen)
         Node {
             width: percent(100),
@@ -439,6 +440,7 @@ fn init(mut commands: Commands, mut settings: ResMut<LoadingScreenSettings>) {
                 ]
             ),
             (
+                #LoadingIndicator
                 Node {
                     position_type: PositionType::Absolute,
                     height: px(32),

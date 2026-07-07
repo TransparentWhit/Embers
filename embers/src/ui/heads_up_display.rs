@@ -1,5 +1,5 @@
 use super::ActiveOverlay;
-use super::dim::DimensionRootNode;
+use super::dim::DimensionViewNode;
 use crate::dim::actor::living::player::{
     Player, PlayerInventory, SelectedHotbarSlot, process_input_hotbar_in_hud,
 };
@@ -21,12 +21,13 @@ struct MainHandSlotNode;
 
 fn init(
     mut commands: Commands,
-    dimension_root_node: Single<Entity, With<DimensionRootNode>>,
+    dimension_view_node: Single<Entity, With<DimensionViewNode>>,
     mut cursor_options: Single<&mut CursorOptions, With<PrimaryWindow>>,
 ) {
     cursor_options.grab_mode = CursorGrabMode::Confined;
     fn hotbar_slot(slot: InventorySlot) -> impl Scene {
         bsn! {
+            #HotbarSlot
             HotbarSlotNode(slot)
             Node {
                 left: px(1),
@@ -39,7 +40,8 @@ fn init(
         }
     }
     commands.spawn_scene(bsn! {
-        ChildOf({*dimension_root_node})
+        #HeadsUpDisplay
+        ChildOf({*dimension_view_node})
         DespawnOnExit<ActiveOverlay>(ActiveOverlay::HeadsUpDisplay)
         Node {
             left: percent(50),
@@ -55,6 +57,7 @@ fn init(
         }
         Children [
             (
+                #Hotbar
                 Node {
                     width: px(122),
                     height: px(22),
@@ -69,6 +72,7 @@ fn init(
                     hotbar_slot(4),
                     hotbar_slot(5),
                     (
+                        #HotbarSelectionIndicator
                         HotbarSelectionIndicatorNode
                         Node {
                             position_type: PositionType::Absolute,
@@ -82,6 +86,7 @@ fn init(
                 ]
             ),
             (
+                #MainHand
                 Node {
                     width: px(22),
                     height: px(22),
@@ -90,6 +95,7 @@ fn init(
                 ui_image_node("main_hand")
                 Children [
                     (
+                        #MainHandSlot
                         MainHandSlotNode
                         Node {
                             left: px(1),
@@ -124,25 +130,24 @@ fn update_hotbar(
     mut commands: Commands,
     player_inventory: Single<Ref<PlayerInventory>>,
     items: Query<&ItemStack>,
-    main_hand_slot: Single<Entity, With<MainHandSlotNode>>,
-    mut hotbar_slots: Query<(Entity, &HotbarSlotNode), Without<MainHandSlotNode>>,
+    main_hand_slot: Single<(Entity, Ref<MainHandSlotNode>)>,
+    hotbar_slots: Query<(Entity, &HotbarSlotNode)>,
 ) {
-    if !player_inventory.is_changed() {
+    let (main_hand_slot_entity, main_hand_slot) = *main_hand_slot;
+    if !player_inventory.is_changed() && !main_hand_slot.is_added() {
         return;
     }
-    {
-        let mut main_hand_slot_commands = commands.entity(*main_hand_slot);
-        match player_inventory.main_hand() {
-            Some(item) => main_hand_slot_commands.apply_scene(item_image_node(
-                items
-                    .get(item)
-                    .expect("Inventory held an item that doesn't exist")
-                    .key(),
-            )),
-            None => main_hand_slot_commands.apply_scene(empty_image_node()),
-        };
-    }
-    for (hotbar_slot_entity, hotbar_slot) in hotbar_slots.iter_mut() {
+    let mut main_hand_slot_commands = commands.entity(main_hand_slot_entity);
+    match player_inventory.main_hand() {
+        Some(item) => main_hand_slot_commands.apply_scene(item_image_node(
+            items
+                .get(item)
+                .expect("Inventory held an item that doesn't exist")
+                .key(),
+        )),
+        None => main_hand_slot_commands.apply_scene(empty_image_node()),
+    };
+    for (hotbar_slot_entity, hotbar_slot) in &hotbar_slots {
         let mut hotbar_slot_commands = commands.entity(hotbar_slot_entity);
         match player_inventory.hotbar(hotbar_slot.0) {
             Some(item) => hotbar_slot_commands.apply_scene(item_image_node(

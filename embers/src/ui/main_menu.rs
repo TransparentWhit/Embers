@@ -3,6 +3,7 @@ use bevy::prelude::*;
 
 fn init(mut commands: Commands) {
     commands.spawn_scene(bsn! {
+        #MainMenu
         RootNode
         DespawnOnExit::<GameState>(GameState::MainMenu)
         Camera2d

@@ -77,12 +77,9 @@ fn process_input_toggle_inventory(
 ) {
     if just_pressed(&CONTROLS_INVENTORY, &keys, &mouse) {
         match **active_overlay {
-            ActiveOverlay::HeadsUpDisplay | ActiveOverlay::GatewayMenu => {
-                next_overlay.set(ActiveOverlay::Inventory)
-            }
+            ActiveOverlay::HeadsUpDisplay => next_overlay.set(ActiveOverlay::Inventory),
             ActiveOverlay::Inventory => next_overlay.set(ActiveOverlay::HeadsUpDisplay),
-            ActiveOverlay::OptionsMain => {}
-            active_overlay => unreachable!("Unexpected active overlay: {:#?}", active_overlay),
+            _ => {}
         }
     }
 }
@@ -114,7 +111,7 @@ fn process_input_entity_interactions_schedule() -> ScheduleConfigs<ScheduleSyste
             } else {
                 None
             }
-            .take_if(|_trigger| matches!(**active_overlay, ActiveOverlay::HeadsUpDisplay)),
+            .filter(|_trigger| matches!(**active_overlay, ActiveOverlay::HeadsUpDisplay)),
             spatial_query
                 .shape_intersections(
                     &ENTITY_INTERACTION_COLLIDER,
@@ -158,9 +155,7 @@ fn process_input_entity_interactions_schedule() -> ScheduleConfigs<ScheduleSyste
                                 )
                             })
                             .map(|interaction| {
-                                player_interactions
-                                    .0
-                                    .set(InteractionTrigger::Click, interaction.clone())
+                                player_interactions.0.set(trigger, interaction.clone())
                             });
                     }
                     entity
@@ -224,7 +219,7 @@ fn process_input_item_actions_schedule() -> ScheduleConfigs<ScheduleSystem> {
                     } else {
                         None
                     }
-                    .take_if(|_trigger| matches!(**active_overlay, ActiveOverlay::HeadsUpDisplay));
+                    .filter(|_trigger| matches!(**active_overlay, ActiveOverlay::HeadsUpDisplay));
                     if matches!(equipment_slot, EquipmentSlot::OffHand)
                         && match *action_status.get(EquipmentSlot::MainHand) {
                             ActionStatus::Idle => false,

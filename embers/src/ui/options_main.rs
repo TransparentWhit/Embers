@@ -4,6 +4,7 @@ use bevy::prelude::*;
 
 fn init(mut commands: Commands, root_node: Single<Entity, With<RootNode>>) {
     commands.spawn_scene(bsn! {
+        #OptionsMain
         ChildOf({*root_node})
         DespawnOnExit<ActiveOverlay>(ActiveOverlay::OptionsMain)
         Node {
@@ -14,6 +15,7 @@ fn init(mut commands: Commands, root_node: Single<Entity, With<RootNode>>) {
         }
         Children [
             (
+                #OptionsLabel
                 Node {
                     grid_column: GridPlacement::span(2),
                     justify_content: JustifyContent::Center,
@@ -22,26 +24,31 @@ fn init(mut commands: Commands, root_node: Single<Entity, With<RootNode>>) {
                 text("Options", WHITE, 14.)
             ),
             (
+                #AudioButton
                 text_button("Audio", |_interaction: On<NodeInteraction>, mut next_overlay: ResMut<NextState<ActiveOverlay>>| {
                     next_overlay.set(ActiveOverlay::OptionsAudio)
                 })
             ),
             (
+                #ControlsButton
                 text_button("Controls", |_interaction: On<NodeInteraction>, mut next_overlay: ResMut<NextState<ActiveOverlay>>| {
                     next_overlay.set(ActiveOverlay::OptionsControls)
                 })
             ),
             (
+                #LanguageButton
                 text_button("Language", |_interaction: On<NodeInteraction>, mut next_overlay: ResMut<NextState<ActiveOverlay>>| {
                     next_overlay.set(ActiveOverlay::OptionsLanguage)
                 })
             ),
             (
+                #VideoButton
                 text_button("Video", |_interaction: On<NodeInteraction>, mut next_overlay: ResMut<NextState<ActiveOverlay>>| {
                     next_overlay.set(ActiveOverlay::OptionsVideo)
                 })
             ),
             (
+                #OptionsDoneButton
                 Node {
                     grid_column: GridPlacement::span(2),
                     justify_content: JustifyContent::Center,

@@ -211,7 +211,7 @@ impl<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypePath> ItemCompo
             item_stack.resource::<PayloadManager>(),
             item_stack.resource::<AssetServer>(),
             item_stack.resource::<Assets<ItemComponentPrototype<C>>>(),
-            item,
+            format!("item_component_prototypes/{}", item.path_string()),
         ) {
             item_stack.insert(prototype.clone());
         }
@@ -403,6 +403,9 @@ impl Action for ItemAction {
     }
     fn duration(&self) -> Duration {
         self.duration
+    }
+    fn path(key: &NamespacedKey) -> String {
+        format!("item_actions/{}", key.path_string())
     }
 }
 
