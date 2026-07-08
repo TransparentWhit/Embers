@@ -1,5 +1,6 @@
 use super::{
-    InjectedPayloads, PayloadManager, Payloads, block_texture, resolve_payload, scan_source_uuid,
+    InjectedPayloads, PayloadManager, Payloads, Tag, block_texture, resolve_payload,
+    scan_source_uuid,
 };
 use crate::dim::MovementsConfig;
 use crate::dim::actor::living::attributes::AttributeBase;
@@ -13,14 +14,14 @@ use crate::ui::{TextureAnimation, TextureScaling};
 use crate::utils::{NamespacedKey, TextureAtlasManifest, path_to_unix_components};
 use anyhow::Error;
 use bevy::asset::io::Reader;
-use bevy::asset::{AssetLoader, AssetServer, LoadContext};
+use bevy::asset::{AssetLoader, AssetPath, AssetServer, LoadContext};
 use bevy::ecs::system::{StaticSystemInput, StaticSystemParam, SystemParam};
 use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
 use bevy_tnua::builtins::TnuaBuiltinWalkConfig;
 use regex::Regex;
-use serde::Deserialize;
-use std::collections::HashMap;
+use serde::{Deserialize, Deserializer};
+use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 use std::sync::LazyLock;
 use toml::{Table, Value, from_slice};
@@ -104,6 +105,32 @@ struct ParticleMeta {
     spawn_duration_secs: f32,
     spawn_period_secs: f32,
     spawn_cycles: u32,*/
+}
+
+static TAG_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"tags/(?P<namespace>[A-Za-z0-9_]+)(?P<key>(?:/[A-Za-z0-9_]+)+)\.tag\.toml$")
+        .unwrap()
+});
+
+enum TagEntry {
+    Tag(AssetPath<'static>),
+    Value(AssetPath<'static>),
+}
+
+impl<'de> Deserialize<'de> for TagEntry {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let string = String::deserialize(deserializer)?;
+        if let Some(stripped) = string.strip_prefix('#') {
+            Ok(TagEntry::Tag(AssetPath::from(stripped.to_string())))
+        } else {
+            Ok(TagEntry::Value(AssetPath::from(string)))
+        }
+    }
+}
+
+#[derive(Asset, Deserialize, TypePath)]
+struct TagMeta {
+    entries: Vec<TagEntry>,
 }
 
 #[derive(TypePath)]
@@ -239,7 +266,7 @@ fn reload_metadata_plugin(app: &mut App) {
         )
     }
     app.add_observer(
-        (|_on_reload_metadata: On<ReloadMetadataRequest>,
+        (|_request: On<ReloadMetadataRequest>,
           mut movements_configs: ResMut<Assets<MovementsConfig>>,
           mut attribute_bases: ResMut<Assets<AttributeBase>>| {
             movements_configs.clear();
@@ -266,6 +293,7 @@ fn reload_metadata_plugin(app: &mut App) {
                             float_height: base.float_height,
                             ..default()
                         },
+                        knockback: default(),
                         sneak: default(),
                         roll: default(),
                     },
@@ -280,7 +308,7 @@ fn reload_metadata_plugin(app: &mut App) {
         )),
     )
     /*.add_observer(
-        (|_on_reload_metadata: On<ReloadMetadataRequest>,
+        (|_request: On<ReloadMetadataRequest>,
           mut block_colliders: RegMut<BlockCollider>,
           mut block_models: RegMut<BlockModel>| {
             block_colliders.clear();
@@ -352,8 +380,7 @@ fn reload_metadata_plugin(app: &mut App) {
         ),
     )*/
     .add_observer(
-        (|_on_reload_metadata: On<ReloadMetadataRequest>,
-          mut item_actions: ResMut<Assets<ItemAction>>| {
+        (|_request: On<ReloadMetadataRequest>, mut item_actions: ResMut<Assets<ItemAction>>| {
             item_actions.clear();
             StaticSystemInput(())
         })
@@ -395,7 +422,7 @@ fn reload_metadata_plugin(app: &mut App) {
         )),
     )
     .add_observer(
-        (|_on_reload_metadata: On<ReloadMetadataRequest>| StaticSystemInput(Vec::new()))
+        (|_request: On<ReloadMetadataRequest>| StaticSystemInput(Vec::new()))
             .pipe(process_meta::<In<Vec<_>>, ItemPrototype, ()>(
                 &ITEM_PROTOTYPE_PATTERN,
                 "item prototype",
@@ -460,12 +487,14 @@ pub(super) fn plugin(app: &mut App) {
         .init_asset::<BlockMeta>()
         .init_asset::<ItemActionMeta>()
         .init_asset::<ItemPrototype>()
+        .init_asset::<TagMeta>()
         .register_asset_loader(RawMetadataLoader::<ActorBase>::new(&["actor.toml"]))
         .register_asset_loader(RawMetadataLoader::<BlockMeta>::new(&["block.toml"]))
         .register_asset_loader(RawMetadataLoader::<ItemActionMeta>::new(&[
             "item_action.toml",
         ]))
         .register_asset_loader(RawMetadataLoader::<ItemPrototype>::new(&["item.toml"]))
+        .register_asset_loader(RawMetadataLoader::<TagMeta>::new(&["tag.toml"]))
         .register_asset_loader(TextureAtlasMetadataLoader)
         .register_asset_loader(RawMetadataLoader::<TextureAnimation>::new(&[
             "animation.toml",

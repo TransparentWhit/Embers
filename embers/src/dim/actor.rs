@@ -3,15 +3,62 @@ pub mod living;
 pub mod primed_tnt;
 pub mod projectile;
 
+use super::{ActiveDimension, LoadedDimensions};
 use crate::ui::GameState;
+use crate::utils::NamespacedKey;
+use bevy::ecs::template::TemplateContext;
 use bevy::prelude::*;
-use uuid::{Uuid, uuid};
+use thiserror::Error;
 
-pub static MOVEMENT_CONFIG_NAMESPACE: Uuid = uuid!("9e037d1a-048d-4784-8ec1-0655421951b1");
-
-#[derive(Clone, Component, Copy, Default)]
+#[derive(Component)]
 #[require(Transform)]
 pub struct Actor;
+
+impl FromTemplate for Actor {
+    type Template = ActorTemplate;
+}
+
+#[derive(Default)]
+pub struct ActorTemplate {
+    dimension: Option<NamespacedKey>,
+}
+
+#[derive(Debug, Error)]
+#[error("Can not spawn entity in nonexistent dimension {dimension}")]
+struct NonexistentDimensionError {
+    dimension: NamespacedKey,
+}
+
+impl Template for ActorTemplate {
+    type Output = Actor;
+    fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
+        context
+            .entity
+            .insert(ChildOf(if let Some(dimension) = &self.dimension {
+                context
+                    .resource::<LoadedDimensions>()
+                    .0
+                    .get(dimension)
+                    .copied()
+                    .ok_or_else(|| NonexistentDimensionError {
+                        dimension: dimension.clone(),
+                    })?
+            } else {
+                context
+                    .entity
+                    .world()
+                    .try_query_filtered::<Entity, With<ActiveDimension>>()
+                    .unwrap()
+                    .single(context.entity.world())?
+            }));
+        Ok(Actor)
+    }
+    fn clone_template(&self) -> Self {
+        Self {
+            dimension: self.dimension.clone(),
+        }
+    }
+}
 
 pub fn actor() -> impl Scene {
     bsn! {

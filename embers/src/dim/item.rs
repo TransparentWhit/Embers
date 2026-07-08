@@ -492,7 +492,7 @@ pub(super) fn plugin(app: &mut App) {
                         let (player, transform) = **player;
                         commands.spawn_scene(bsn! {
                             primed_tnt()
-                            // exclude_source(player) TODO
+                            exclude_source(player)
                             template_value({transform.clone()})
                             LinearVelocity({transform.rotation * -Vec3::Z * velocity})
                         });

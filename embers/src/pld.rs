@@ -96,6 +96,27 @@ impl<M: TypePath, T: ?Sized + Send + Sync + 'static> Boxed<M, T> {
     }
 }
 
+#[derive(Asset, TypePath)]
+pub struct Tag<A: Asset> {
+    tags: HashSet<AssetPath<'static>>,
+    _marker: PhantomData<fn() -> A>,
+}
+
+impl<A: Asset> Tag<A> {
+    fn new(tags: HashSet<AssetPath<'static>>) -> Self {
+        Self {
+            tags,
+            _marker: PhantomData,
+        }
+    }
+    pub fn contains<'path>(&self, path: impl Into<AssetPath<'path>>) -> bool {
+        self.tags.contains(&path.into())
+    }
+    pub fn iter(&self) -> impl Iterator<Item = &AssetPath<'_>> {
+        self.tags.iter()
+    }
+}
+
 pub(crate) static EMBERS_PAYLOAD_SOURCE_UUID: Uuid = uuid!("9e037d1a-048d-4784-8ec1-0655421951b1");
 
 pub trait PayloadPath {
@@ -168,6 +189,17 @@ impl<A: Asset> EmbersPayloads<A> for Assets<A> {
         payload: A,
     ) {
         self.inject(injected_payloads, EMBERS_PAYLOAD_SOURCE_UUID, path, payload);
+    }
+}
+
+pub trait PayloadApp {
+    fn init_tags<A: Asset>(&mut self) -> &mut Self;
+}
+
+impl<App: AssetApp> PayloadApp for App {
+    #[inline]
+    fn init_tags<A: Asset>(&mut self) -> &mut Self {
+        self.init_asset::<Tag<A>>()
     }
 }
 

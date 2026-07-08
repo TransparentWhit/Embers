@@ -11,21 +11,27 @@ use actor::item_actor::item_actor_of;
 use actor::living::dummy::dummy;
 use actor::living::player;
 use actor::living::player::{Player, PlayerInventory, player};
+use actor::living::{Damage, LivingActor};
+use avian3d::math::Quaternion;
 use avian3d::prelude::*;
 use avian3d::schedule::LastPhysicsTick;
+use bevy::asset::HandleTemplate;
 use bevy::ecs::change_detection::Tick;
 use bevy::ecs::component::Mutable;
 use bevy::ecs::query::QueryFilter;
 use bevy::ecs::system::{StaticSystemParam, SystemParam};
+use bevy::ecs::template::TemplateContext;
 use bevy::prelude::*;
 use bevy::time::Stopwatch;
-use bevy_tnua::builtins::{TnuaBuiltinCrouch, TnuaBuiltinDash};
+use bevy_sprinkles::prelude::*;
+use bevy_tnua::builtins::{TnuaBuiltinCrouch, TnuaBuiltinDash, TnuaBuiltinKnockback};
 use bevy_tnua::prelude::*;
 use derive_where::derive_where;
 use embers_macros::identify;
 use item::inv::{ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt};
 use item::item_stack;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::ops::Neg;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
@@ -41,7 +47,10 @@ pub mod embers {
     dim!(LOBBY, "lobby");
 }
 
-#[derive(Component)]
+#[derive(Default, Resource)]
+pub struct LoadedDimensions(pub HashMap<NamespacedKey, Entity>);
+
+#[derive(Clone, Component, Default)]
 #[require(Dimension)]
 pub struct ActiveDimension;
 
@@ -79,13 +88,15 @@ struct Ground;
 fn handle_dimension_generation_request(
     request: On<DimensionGenerationRequest>,
     mut commands: Commands,
+    mut loaded: ResMut<LoadedDimensions>,
     root_node: Single<Entity, With<RootNode>>,
 ) {
     let DimensionGenerationRequest(key) = &*request;
-    commands.spawn_scene(bsn! {
+    loaded.0.insert(key.clone(), commands.spawn_scene(bsn! {
         #Dimension
         ChildOf({*root_node})
         Dimension({key.clone()})
+        ActiveDimension
         Transform
         Visibility
         Children [
@@ -132,7 +143,7 @@ fn handle_dimension_generation_request(
                 Transform::from_xyz(2.0, 1.0, 0.0)
             ),
         ]
-    });
+    }).id());
 }
 
 #[derive(Deserialize, Serialize, Copy, Clone, Debug, Eq, Hash, PartialEq)]
@@ -282,11 +293,11 @@ impl PhysicsPreset {
     }
 }
 
-pub fn exclude_source(source: Entity) -> impl Bundle {
-    (
-        SourceExclusion(source, Tick::MAX),
-        ActiveCollisionHooks::MODIFY_CONTACTS,
-    )
+pub fn exclude_source(source: Entity) -> impl Scene {
+    bsn! {
+        template(move |_| Ok(SourceExclusion(source, Tick::MAX)))
+        ActiveCollisionHooks::MODIFY_CONTACTS
+    }
 }
 
 #[derive(Component)]
@@ -341,6 +352,7 @@ impl CollisionHooks for SourceExclusionCollisionHooks<'_, '_> {
 #[derive(TnuaScheme, Debug)]
 #[scheme(basis = TnuaBuiltinWalk)]
 pub enum Movements {
+    Knockback(TnuaBuiltinKnockback),
     Sneak(TnuaBuiltinCrouch),
     Roll(TnuaBuiltinDash),
 }
@@ -653,6 +665,103 @@ impl Interactable {
     }
 }
 
+#[derive(Event)]
+struct Explosion {
+    pub position: Vec3,
+    pub power: f32,
+}
+
+fn explode(
+    explosion: On<Explosion>,
+    mut commands: Commands,
+    spatial_query: SpatialQuery,
+    living_actors: Query<(Entity, &GlobalTransform), With<LivingActor>>,
+    mut damages: MessageWriter<Damage>,
+) {
+    let Explosion { position, power } = *explosion;
+    #[derive(Default)]
+    struct TmpParticles3dTemplate(HandleTemplate<ParticlesAsset>);
+    impl Template for TmpParticles3dTemplate {
+        type Output = Particles3d;
+        fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
+            Ok(Particles3d(self.0.build_template(context)?))
+        }
+        fn clone_template(&self) -> Self {
+            Self(self.0.clone_template())
+        }
+    }
+    commands.spawn_scene(bsn! {
+        template_value(TmpParticles3dTemplate(asset_value(ParticlesAsset::new(
+            "Explosion".into(),
+            ParticlesDimension::D3,
+            default(),
+            vec![EmitterData {
+                time: EmitterTime {
+                    lifetime: 2.95,
+                    lifetime_randomness: 0.8426,
+                    one_shot: true,
+                    explosiveness: 1.0,
+                    ..default()
+                },
+                draw_pass: EmitterDrawPass {
+                    mesh: ParticleMesh::Quad {
+                        orientation: default(),
+                        size: Vec2::ONE,
+                        subdivide: Vec2::ZERO,
+                    },
+                    material: DrawPassMaterial::Standard(StandardParticleMaterial {
+                        alpha_mode: SerializableAlphaMode::Blend,
+                        base_color_texture: Some(TextureRef::Asset(
+                            "global/textures/particles/embers/explosion_10.png".to_string(),
+                        )),
+                        unlit: true,
+                        ..default()
+                    }),
+                    transform_align: Some(TransformAlign::Billboard),
+                    ..default()
+                },
+                emission: EmitterEmission {
+                    shape: EmissionShape::Sphere { radius: 1. },
+                    particles_amount: 8,
+                    ..default()
+                },
+                accelerations: EmitterAccelerations {
+                    gravity: Vec3::new(0.0, -0.08, 0.0),
+                    ..default()
+                },
+                ..default()
+            }],
+            vec![],
+            true,
+            default(),
+        ))))
+        Transform::from_translation(position)
+    });
+    // TODO consider more realistic explosions
+    let radius = power * 2.;
+    damages.write_batch(
+        spatial_query
+            .shape_intersections(
+                &Collider::sphere(radius),
+                position,
+                Quaternion::IDENTITY,
+                &SpatialQueryFilter::from_mask(CollisionLayer::LivingActor),
+            )
+            .into_iter()
+            .filter_map(|entity| living_actors.get(entity).ok())
+            .map(|(entity, transform)| {
+                let (direction, distance) =
+                    (transform.translation() - position).normalize_and_length();
+                let x = 1. - distance / radius;
+                Damage {
+                    target: entity,
+                    amount: 7. * (x * x + x) * power + 1.,
+                    knockback: direction * x * 17.,
+                }
+            }),
+    );
+}
+
 /// Time of the day, within [0, 1).
 #[derive(Component)]
 pub struct WorldTime(pub f32);
@@ -732,7 +841,9 @@ pub(super) fn plugin(app: &mut App) {
                 ],
             ),
         )
+        .init_resource::<LoadedDimensions>()
         .add_observer(handle_dimension_generation_request)
+        .add_observer(explode)
         .add_plugins(actor::plugin)
         .add_plugins(block::plugin)
         .add_plugins(item::plugin)

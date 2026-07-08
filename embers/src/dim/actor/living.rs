@@ -11,6 +11,7 @@ use attributes::{Attributes, AttributesTemplate, MaxHealth};
 use bevy::ecs::template::TemplateContext;
 use bevy::prelude::*;
 use bevy::scene::SceneFunction;
+use bevy_tnua::builtins::TnuaBuiltinKnockback;
 use bevy_tnua::prelude::*;
 
 #[derive(Component, Debug, Default)]
@@ -90,6 +91,41 @@ pub fn living_actor(key: &NamespacedKey, interactable: bool) -> impl Scene {
     }
 }
 
+#[derive(Message)]
+pub struct Damage {
+    pub target: Entity,
+    pub amount: f32,
+    pub knockback: Vec3,
+}
+
+fn damage(
+    mut damages: MessageReader<Damage>,
+    mut commands: Commands,
+    mut living_actors: Query<(&mut Health, &mut TnuaController<Movements>)>,
+) {
+    for Damage {
+        target,
+        amount,
+        knockback,
+    } in damages.read()
+    {
+        let Ok((mut health, mut controller)) = living_actors.get_mut(*target) else {
+            warn!("Could not damage nonexistent living actor {}", target);
+            continue;
+        };
+        health.0 -= amount;
+        controller.action_interrupt(Movements::Knockback(TnuaBuiltinKnockback {
+            shove: *knockback,
+            force_forward: None,
+        }));
+        /*commands.spawn_scene(bsn! {
+            Particles3d()
+        });*/
+    }
+}
+
 pub(super) fn plugin(app: &mut App) {
-    app.add_plugins(attributes::plugin);
+    app.add_message::<Damage>()
+        .add_systems(Update, damage)
+        .add_plugins(attributes::plugin);
 }

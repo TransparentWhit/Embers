@@ -1,12 +1,9 @@
 use super::actor;
-use crate::dim::PhysicsPreset;
-use crate::pld::{GltfElementId, PayloadManager, actor_scene, animate_actor};
+use crate::dim::{Explosion, PhysicsPreset};
+use crate::pld::{GltfElementId, actor_scene};
 use crate::utils::NamespacedKey;
 use avian3d::prelude::*;
-use bevy::asset::HandleTemplate;
-use bevy::ecs::template::TemplateContext;
 use bevy::prelude::*;
-use bevy_sprinkles::prelude::*;
 use std::sync::LazyLock;
 use std::time::Duration;
 
@@ -25,72 +22,15 @@ impl Default for Fuse {
 
 pub(super) fn fuse(
     mut commands: Commands,
-    mut query: Query<(Entity, &Transform, &mut AnimationPlayer, Mut<Fuse>)>,
-    payload_manager: Res<PayloadManager>,
-    asset_server: Res<AssetServer>,
-    models: Res<Assets<Gltf>>,
-    mut particles: ResMut<Assets<ParticlesAsset>>,
+    mut query: Query<(Entity, &GlobalTransform, Mut<Fuse>)>,
     time: Res<Time>,
 ) {
-    for (entity, transform, mut animation_player, mut fuse) in query.iter_mut() {
+    for (entity, transform, mut fuse) in query.iter_mut() {
         fuse.0.tick(time.delta());
         if fuse.0.is_finished() {
-            #[derive(Default)]
-            struct TmpParticles3dTemplate(HandleTemplate<ParticlesAsset>);
-            impl Template for TmpParticles3dTemplate {
-                type Output = Particles3d;
-                fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
-                    Ok(Particles3d(self.0.build_template(context)?))
-                }
-                fn clone_template(&self) -> Self {
-                    Self(self.0.clone_template())
-                }
-            }
-            commands.spawn_scene(bsn! {
-                template_value(TmpParticles3dTemplate(asset_value(ParticlesAsset::new(
-                    "Explosion".into(),
-                    ParticlesDimension::D3,
-                    default(),
-                    vec![EmitterData {
-                        time: EmitterTime {
-                            lifetime: 2.95,
-                            lifetime_randomness: 0.8426,
-                            one_shot: true,
-                            explosiveness: 1.0,
-                            ..default()
-                        },
-                        draw_pass: EmitterDrawPass {
-                            mesh: ParticleMesh::Quad {
-                                orientation: default(),
-                                size: Vec2::ONE,
-                                subdivide: Vec2::ZERO,
-                            },
-                            material: DrawPassMaterial::Standard(StandardParticleMaterial {
-                                alpha_mode: SerializableAlphaMode::Blend,
-                                base_color_texture: Some(TextureRef::Asset(
-                                    "global/textures/particles/explosion_10.png".to_string(),
-                                )),
-                                unlit: true,
-                                ..default()
-                            }),
-                            transform_align: Some(TransformAlign::Billboard),
-                            ..default()
-                        },
-                        emission: EmitterEmission {
-                            shape: EmissionShape::Sphere { radius: 1. },
-                            particles_amount: 8,
-                            ..default()
-                        },
-                        accelerations: EmitterAccelerations {
-                            gravity: Vec3::new(0.0, -0.08, 0.0),
-                            ..default()
-                        },
-                        ..default()
-                    }],
-                    vec![],
-                    true,
-                    default(),
-                ))))
+            commands.trigger(Explosion {
+                power: 4.,
+                position: transform.translation(),
             });
             commands.entity(entity).despawn();
         }

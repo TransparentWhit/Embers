@@ -1,6 +1,5 @@
 use super::attributes::{Attributes, MovementSpeed};
 use super::living_actor;
-use crate::dim::actor::MOVEMENT_CONFIG_NAMESPACE;
 use crate::dim::item::inv::{
     Inventory, InventorySlot, ItemDestination, ItemMoveQuantity, ItemSource, MoveItemCommandExt,
 };
@@ -28,10 +27,8 @@ use bevy_tnua::builtins::TnuaBuiltinDash;
 use bevy_tnua::prelude::*;
 use std::marker::PhantomData;
 use std::ops::Range;
-use std::string::ToString;
 use std::sync::{LazyLock, RwLock};
 use std::time::Duration;
-use uuid::Uuid;
 
 macro_rules! controls {
     ($ident:ident, M@$default_mouse:ident) => {
@@ -455,9 +452,6 @@ fn process_input_movement(
 }
 
 pub static KEY: LazyLock<NamespacedKey> = LazyLock::new(|| NamespacedKey::new_embers("player"));
-
-pub static UUID: LazyLock<Uuid> =
-    LazyLock::new(|| Uuid::new_v5(&MOVEMENT_CONFIG_NAMESPACE, KEY.to_string().as_bytes()));
 
 #[derive(Clone, Component, Default)]
 #[require(
