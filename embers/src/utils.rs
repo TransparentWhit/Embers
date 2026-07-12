@@ -3,9 +3,11 @@ pub mod physics;
 use bevy::asset::AssetPath;
 use bevy::prelude::*;
 use bevy::scene::SceneFunction;
+use rand::{SeedableRng, make_rng};
 use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
+use std::ops::{Deref, DerefMut};
 use std::path::Path;
 use std::result::Result;
 use std::str::FromStr;
@@ -100,6 +102,10 @@ impl<T> Keyed for (NamespacedKey, T) {
     }
 }
 
+pub trait TypeKey {
+    fn key() -> &'static NamespacedKey;
+}
+
 #[derive(Debug, Error)]
 pub enum IllegalNamespacedKeyError {
     #[error("Invalid namespace: {0}")]
@@ -186,9 +192,7 @@ impl NamespacedKey {
         Self::new(Self::EMBERS_NAMESPACE, key)
     }
     /// Attempts to create a new [NamespacedKey] from the given `value`.
-    pub fn try_from<'val, 'default_namespace>(
-        value: impl Into<&'val str>,
-    ) -> Result<Self, IllegalNamespacedKeyError> {
+    pub fn try_from<'val>(value: impl Into<&'val str>) -> Result<Self, IllegalNamespacedKeyError> {
         let value = value.into();
         match NAMESPACED_KEY_PATTERN.captures(value) {
             Some(captures) => Ok(Self::new_internal(&captures["namespace"], &captures["key"])),
@@ -330,6 +334,27 @@ pub fn path_to_unix_components<P: AsRef<Path>>(path: P) -> String {
 )]
 pub enum Void {}
 
+pub struct SystemRng<R: SeedableRng>(R);
+
+impl<R: SeedableRng> Deref for SystemRng<R> {
+    type Target = R;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<R: SeedableRng> DerefMut for SystemRng<R> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<R: SeedableRng> FromWorld for SystemRng<R> {
+    fn from_world(_world: &mut World) -> Self {
+        SystemRng(make_rng())
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct TextureAtlasManifest {
     textures_to_place: Vec<(Option<AssetId<Image>>, Handle<Image>)>,
@@ -365,6 +390,19 @@ impl TextureAtlasManifest {
         }
         Ok(builder)
     }
+}
+
+pub fn template_bundle(
+    template: impl Template<Output = impl Bundle> + Send + Sync + 'static,
+) -> impl Scene {
+    SceneFunction(move |_scene_context, resolved| {
+        resolved.push_bundle_template(template);
+    })
+}
+
+#[inline]
+pub fn template_bundle_for(bundle: impl Bundle + Clone) -> impl Scene {
+    template_bundle(template(move |_context| Ok(bundle.clone())))
 }
 
 pub fn remove_bundle<B: Bundle>() -> impl Scene {

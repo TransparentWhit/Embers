@@ -5,7 +5,7 @@ use crate::dim::actor::living::player::{
 };
 use crate::dim::item::ItemStack;
 use crate::dim::item::inv::InventorySlot;
-use crate::pld::{empty_image_node, item_image_node, ui_image_node};
+use crate::pld::foundry::{empty_image_node, item_image_node, ui_image_node};
 use crate::utils::Keyed;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
@@ -63,7 +63,7 @@ fn init(
                     height: px(22),
                     margin: UiRect::horizontal(px(3)),
                 }
-                ui_image_node("hotbar")
+                ui_image_node("hud/hotbar")
                 Children [
                     hotbar_slot(0),
                     hotbar_slot(1),
@@ -81,7 +81,7 @@ fn init(
                             width: px(24),
                             height: px(23),
                         }
-                        ui_image_node("hotbar_selection")
+                        ui_image_node("hud/hotbar_selection")
                     ),
                 ]
             ),
@@ -92,7 +92,7 @@ fn init(
                     height: px(22),
                     margin: UiRect::horizontal(px(3)),
                 }
-                ui_image_node("main_hand")
+                ui_image_node("hud/main_hand")
                 Children [
                     (
                         #MainHandSlot

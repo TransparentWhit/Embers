@@ -1,4 +1,4 @@
-use super::{BoxedItemComponent, ItemStack, MaxStackSize, StackCount};
+use super::{BoxedItemComponentType, ItemStack, MaxStackSize, StackCount};
 use crate::dim::actor::item_actor::ItemActor;
 use crate::utils::Marker;
 use bevy::prelude::*;
@@ -108,7 +108,7 @@ fn try_stack(
         None => return ItemStackResult::NotStackable,
     };
     if world
-        .resource::<Assets<BoxedItemComponent>>()
+        .resource::<Assets<BoxedItemComponentType>>()
         .iter()
         .any(|(_id, item_component)| item_component.dyn_ne(source_ref, target_ref))
     {

@@ -9,8 +9,10 @@ pub mod options_video;
 pub mod pause_screen;
 pub mod title_screen;
 
-use crate::pld::{text_font, ui_image_node};
+use crate::pld::Payload;
+use crate::pld::foundry::{text_font, ui_image_node};
 use crate::utils::NamespacedKey;
+use bevy::asset::AssetPath;
 use bevy::color::palettes::css::WHITE;
 use bevy::ecs::system::{IntoObserverSystem, NonSendMarker, ObserverSystem};
 use bevy::input_focus::{FocusGained, FocusLost, InputFocus};
@@ -270,11 +272,23 @@ impl From<&TextureScaling> for NodeImageMode {
     }
 }
 
+impl Payload for TextureScaling {
+    fn payload_root() -> AssetPath<'static> {
+        "textures".into()
+    }
+}
+
 #[derive(Asset, Debug, Deserialize, TypePath, Clone, PartialEq)]
 pub struct TextureAnimation {
     atlas_begin_index: usize,
     atlas_end_index: usize,
     frame_time_secs: f32,
+}
+
+impl Payload for TextureAnimation {
+    fn payload_root() -> AssetPath<'static> {
+        "textures".into()
+    }
 }
 
 #[derive(Clone, Component, Debug, PartialEq)]

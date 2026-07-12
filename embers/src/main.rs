@@ -13,6 +13,7 @@ use bevy::input_focus::directional_navigation::DirectionalNavigationPlugin;
 use bevy::input_focus::tab_navigation::TabNavigationPlugin;
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
+use bevy::settings::SettingsGroup;
 use bevy::window::WindowTheme;
 use bevy_sprinkles::prelude::*;
 use bevy_tnua::prelude::*;
@@ -25,7 +26,7 @@ use ui::loading_screen::{Load, MainMenuEntryContext};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[derive(Debug, Reflect, Resource)]
+#[derive(Debug, Reflect, Resource, SettingsGroup)]
 struct Options {}
 
 pub static UNPROCESSED_ASSETS_ROOT: OnceLock<PathBuf> = OnceLock::new();

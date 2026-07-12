@@ -4,18 +4,20 @@ mod chunk;
 pub mod item;
 
 use crate::input::InteractionTrigger;
-use crate::pld::{PayloadManager, inject_keyed_embers_payload_batch, resolve_handle};
+use crate::pld::manager::{
+    PayloadManager, inject_keyed_embers_payload_batch, resolve_handle, resolve_payload,
+};
+use crate::pld::{Payload, PayloadApp, Tag};
 use crate::ui::{ActiveOverlay, RootNode};
 use crate::utils::{Keyed, NamespacedKey};
 use actor::item_actor::item_actor_of;
 use actor::living::dummy::dummy;
-use actor::living::player;
 use actor::living::player::{Player, PlayerInventory, player};
-use actor::living::{Damage, LivingActor};
+use actor::living::{Damage, DamageKnockback, DamageSource, LivingActor, player};
 use avian3d::math::Quaternion;
 use avian3d::prelude::*;
 use avian3d::schedule::LastPhysicsTick;
-use bevy::asset::HandleTemplate;
+use bevy::asset::{AssetPath, HandleTemplate};
 use bevy::ecs::change_detection::Tick;
 use bevy::ecs::component::Mutable;
 use bevy::ecs::query::QueryFilter;
@@ -23,6 +25,7 @@ use bevy::ecs::system::{StaticSystemParam, SystemParam};
 use bevy::ecs::template::TemplateContext;
 use bevy::prelude::*;
 use bevy::time::Stopwatch;
+use bevy_sprinkles::asset::{Gradient, Range};
 use bevy_sprinkles::prelude::*;
 use bevy_tnua::builtins::{TnuaBuiltinCrouch, TnuaBuiltinDash, TnuaBuiltinKnockback};
 use bevy_tnua::prelude::*;
@@ -357,7 +360,13 @@ pub enum Movements {
     Roll(TnuaBuiltinDash),
 }
 
-pub trait Action: Asset + Clone + Keyed {
+impl Payload for MovementsConfig {
+    fn payload_root() -> AssetPath<'static> {
+        "movements_configs".into()
+    }
+}
+
+pub trait Action: Payload + Clone + Keyed {
     type Environment: SystemParam;
     fn on_begin<'world, 'state>(
         &self,
@@ -371,8 +380,6 @@ pub trait Action: Asset + Clone + Keyed {
         duration: Option<Duration>,
     ) -> Option<NamespacedKey>;
     fn duration(&self) -> Duration;
-    // TODO move this logic to pld
-    fn path(key: &NamespacedKey) -> String;
 }
 
 #[derive(Eq, PartialEq, Clone)]
@@ -470,6 +477,7 @@ fn update_action<
     payload_manager: Res<PayloadManager>,
     asset_server: Res<AssetServer>,
     actions: Res<Assets<A>>,
+    action_tags: Res<Assets<Tag<A>>>,
     mut interruptions: MessageReader<ActionInterruption>,
 ) {
     let (ref mut status, ref mut slots) = agent.get_mut(agent_entity).unwrap();
@@ -478,13 +486,22 @@ fn update_action<
     //let environment = environment.into_inner();
     trigger.take_if(|active_trigger| {
         let interrupted = interruptions.read().any(|event| {
-            event.agent_entity == agent_entity && false /*actions.is_tagged(
-            &event.interruption,
-            slots
-            .get(*active_trigger)
-            .expect("Should not be performing nonexistent action")
-            .key(),
-            )*/ // TODO tags
+            event.agent_entity == agent_entity
+                && resolve_payload(
+                    &payload_manager,
+                    &asset_server,
+                    &action_tags,
+                    &event.interruption,
+                )
+                .is_some_and(|interruptable| {
+                    interruptable.contains(
+                        slots
+                            .get(*active_trigger)
+                            .and_then(|handle| actions.get(handle))
+                            .expect("Should not be performing nonexistent action")
+                            .key(),
+                    )
+                })
         });
         interruptions.clear();
         interrupted
@@ -528,7 +545,7 @@ fn update_action<
                                     &payload_manager,
                                     &asset_server,
                                     &actions,
-                                    A::path(&new_action),
+                                    &new_action,
                                 )
                             })
                         {
@@ -559,12 +576,7 @@ fn update_action<
                             Some(timer.elapsed()).filter(|used| action.duration() >= *used),
                         )
                         .and_then(|new_action| {
-                            resolve_handle(
-                                &payload_manager,
-                                &asset_server,
-                                &actions,
-                                A::path(&new_action),
-                            )
+                            resolve_handle(&payload_manager, &asset_server, &actions, &new_action)
                         })
                     {
                         slots.set(trigger, new_action);
@@ -596,6 +608,12 @@ pub struct EntityInteraction {
             + Sync,
     >,
     duration: Duration,
+}
+
+impl Payload for EntityInteraction {
+    fn payload_root() -> AssetPath<'static> {
+        "entity_interactions".into()
+    }
 }
 
 impl EntityInteraction {
@@ -643,9 +661,6 @@ impl Action for EntityInteraction {
     fn duration(&self) -> Duration {
         self.duration
     }
-    fn path(key: &NamespacedKey) -> String {
-        format!("entity_interactions/{}", key.path_string())
-    }
 }
 
 #[derive(Component, Clone, Debug, Default, PartialEq)]
@@ -667,7 +682,7 @@ impl Interactable {
 
 #[derive(Event)]
 struct Explosion {
-    pub position: Vec3,
+    pub source: DamageSource,
     pub power: f32,
 }
 
@@ -678,7 +693,7 @@ fn explode(
     living_actors: Query<(Entity, &GlobalTransform), With<LivingActor>>,
     mut damages: MessageWriter<Damage>,
 ) {
-    let Explosion { position, power } = *explosion;
+    let Explosion { source, power } = *explosion;
     #[derive(Default)]
     struct TmpParticles3dTemplate(HandleTemplate<ParticlesAsset>);
     impl Template for TmpParticles3dTemplate {
@@ -692,50 +707,71 @@ fn explode(
     }
     commands.spawn_scene(bsn! {
         template_value(TmpParticles3dTemplate(asset_value(ParticlesAsset::new(
-            "Explosion".into(),
+            "Huge Explosion".into(),
             ParticlesDimension::D3,
             default(),
-            vec![EmitterData {
-                time: EmitterTime {
-                    lifetime: 2.95,
-                    lifetime_randomness: 0.8426,
-                    one_shot: true,
-                    explosiveness: 1.0,
-                    ..default()
-                },
-                draw_pass: EmitterDrawPass {
-                    mesh: ParticleMesh::Quad {
-                        orientation: default(),
-                        size: Vec2::ONE,
-                        subdivide: Vec2::ZERO,
-                    },
-                    material: DrawPassMaterial::Standard(StandardParticleMaterial {
-                        alpha_mode: SerializableAlphaMode::Blend,
-                        base_color_texture: Some(TextureRef::Asset(
-                            "global/textures/particles/embers/explosion_10.png".to_string(),
-                        )),
-                        unlit: true,
+            vec![
+                EmitterData {
+                    name: "explosion_burst".to_string(),
+                    time: EmitterTime {
+                        lifetime: 0.5,
+                        lifetime_randomness: 0.4,
+                        one_shot: true,
+                        explosiveness: 1.0,
                         ..default()
-                    }),
-                    transform_align: Some(TransformAlign::Billboard),
+                    },
+                    draw_pass: EmitterDrawPass {
+                        mesh: ParticleMesh::Quad {
+                            orientation: default(),
+                            size: Vec2::ONE,
+                            subdivide: Vec2::ZERO,
+                        },
+                        material: DrawPassMaterial::Standard(StandardParticleMaterial {
+                            alpha_mode: SerializableAlphaMode::Blend,
+                            base_color_texture: Some(TextureRef::Asset(
+                                "global/textures/particles/embers/explosion_10.png".to_string(),
+                            )),
+                            unlit: true,
+                            ..default()
+                        }),
+                        transform_align: Some(TransformAlign::Billboard),
+                        ..default()
+                    },
+                    emission: EmitterEmission {
+                        shape: EmissionShape::Box { extents: Vec3::new(8., 8., 8.) },
+                        particles_amount: 6,
+                        ..default()
+                    },
+                    accelerations: EmitterAccelerations {
+                        gravity: Vec3::new(0.0, 0.0, 0.0),
+                        ..default()
+                    },
+                    scale: EmitterScale {
+                        range: Range::new(0.1, 0.7),
+                        ..default()
+                    },
+                    colors: EmitterColors {
+                        initial_color: SolidOrGradientColor::Gradient { gradient: Gradient {
+                            stops: vec![
+                                GradientStop { color: [0.6, 0.6, 0.6, 1.0], position: 0.0 },
+                                GradientStop { color: [1.0, 1.0, 1.0, 1.0], position: 1.0 },
+                            ],
+                            ..default()
+                        } },
+                        color_over_lifetime: Gradient::white(),
+                        ..default()
+                    },
                     ..default()
                 },
-                emission: EmitterEmission {
-                    shape: EmissionShape::Sphere { radius: 1. },
-                    particles_amount: 8,
-                    ..default()
-                },
-                accelerations: EmitterAccelerations {
-                    gravity: Vec3::new(0.0, -0.08, 0.0),
-                    ..default()
-                },
-                ..default()
-            }],
+            ],
             vec![],
             true,
-            default(),
+            ParticlesAuthors {
+                submitted_by: "TransparentWhite".to_string(),
+                ..default()
+            },
         ))))
-        Transform::from_translation(position)
+        Transform::from_translation(source.origin)
     });
     // TODO consider more realistic explosions
     let radius = power * 2.;
@@ -743,7 +779,7 @@ fn explode(
         spatial_query
             .shape_intersections(
                 &Collider::sphere(radius),
-                position,
+                source.origin,
                 Quaternion::IDENTITY,
                 &SpatialQueryFilter::from_mask(CollisionLayer::LivingActor),
             )
@@ -751,12 +787,13 @@ fn explode(
             .filter_map(|entity| living_actors.get(entity).ok())
             .map(|(entity, transform)| {
                 let (direction, distance) =
-                    (transform.translation() - position).normalize_and_length();
+                    (transform.translation() - source.origin).normalize_and_length();
                 let x = 1. - distance / radius;
                 Damage {
                     target: entity,
                     amount: 7. * (x * x + x) * power + 1.,
-                    knockback: direction * x * 17.,
+                    knockback: DamageKnockback::Directional(direction * x * 17.),
+                    source,
                 }
             }),
     );
@@ -799,10 +836,11 @@ pub fn gateway() -> impl Scene {
 pub(super) fn plugin(app: &mut App) {
     app.add_message::<ActionInterruption>()
         .init_asset::<EntityInteraction>()
+        .init_tags::<EntityInteraction>()
         .add_systems(
             PreStartup,
             inject_keyed_embers_payload_batch::<EntityInteraction>(
-                "entity_interactions/{}",
+                "{}",
                 [
                     EntityInteraction::new(
                         NamespacedKey::new_embers("item_actor/pickup"),

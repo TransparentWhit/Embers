@@ -2,6 +2,7 @@ template = "melee"
 
 [config]
 damage = 8.0
+knockback = 8.0
 arc_deg = 30.0
 range = 6.0
 wield = "dual"

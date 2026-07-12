@@ -1,7 +1,7 @@
 use super::loading_screen::{DimensionEntryContext, Load};
 use super::{ActiveOverlay, NodeInteraction, RootNode, text, text_button};
 use crate::dim::embers;
-use crate::pld::ui_image_node;
+use crate::pld::foundry::ui_image_node;
 use bevy::color::palettes::css::WHITE;
 use bevy::input_focus::tab_navigation::{TabGroup, TabIndex};
 use bevy::prelude::*;

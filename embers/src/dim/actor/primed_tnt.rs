@@ -1,6 +1,7 @@
 use super::actor;
+use crate::dim::actor::living::DamageSource;
 use crate::dim::{Explosion, PhysicsPreset};
-use crate::pld::{GltfElementId, actor_scene};
+use crate::pld::foundry::{GltfElementId, actor_scene};
 use crate::utils::NamespacedKey;
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -30,7 +31,11 @@ pub(super) fn fuse(
         if fuse.0.is_finished() {
             commands.trigger(Explosion {
                 power: 4.,
-                position: transform.translation(),
+                source: DamageSource {
+                    origin: transform.translation(),
+                    causing_entity: None,
+                    direct_entity: Some(entity),
+                },
             });
             commands.entity(entity).despawn();
         }

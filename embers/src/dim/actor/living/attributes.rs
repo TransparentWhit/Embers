@@ -1,38 +1,45 @@
-use crate::pld::{Boxed, PayloadManager, inject_keyed_embers_payload_batch, resolve_payload};
-use crate::utils::{Keyed, NamespacedKey};
+use crate::pld::manager::{PayloadManager, inject_keyed_embers_payload_batch, resolve_payload};
+use crate::pld::{Boxed, BoxedPayloadMarker, Payload};
+use crate::utils::{Keyed, NamespacedKey, TypeKey};
+use bevy::asset::AssetPath;
 use bevy::ecs::template::TemplateContext;
 use bevy::prelude::*;
 use derive_where::derive_where;
-use embers_macros::identify;
-use std::collections::{HashMap, HashSet};
+use embers_macros::{TypeKey, identify};
+use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::LazyLock;
 
-pub trait Attribute: Keyed + Send + Sync + 'static {
-    fn dyn_clone(&self) -> Box<dyn Attribute>;
+pub trait AttributeType: Keyed + Send + Sync + 'static {
+    fn dyn_clone(&self) -> Box<dyn AttributeType>;
     fn insert_attribute(&self, entity: &mut EntityWorldMut, actor_key: &NamespacedKey);
 }
 
 #[derive(TypePath)]
 #[doc(hidden)]
-pub enum DynAttribute {}
+pub enum DynAttributeType {}
 
-pub type BoxedAttribute = Boxed<DynAttribute, dyn Attribute>;
-
-#[derive_where(Clone)]
-pub struct StandardAttribute<A: 'static> {
-    key: NamespacedKey,
-    _marker: PhantomData<fn() -> A>,
-}
-
-impl<A: 'static> Keyed for StandardAttribute<A> {
-    fn key(&self) -> &NamespacedKey {
-        &self.key
+impl BoxedPayloadMarker for DynAttributeType {
+    fn payload_root() -> AssetPath<'static> {
+        "attributes".into()
     }
 }
 
-impl<A: 'static> Attribute for StandardAttribute<A> {
-    fn dyn_clone(&self) -> Box<dyn Attribute> {
+pub type BoxedAttributeType = Boxed<DynAttributeType, dyn AttributeType>;
+
+#[derive_where(Clone)]
+pub struct StandardAttributeType<A: TypeKey + 'static> {
+    _marker: PhantomData<fn() -> A>,
+}
+
+impl<A: TypeKey + 'static> Keyed for StandardAttributeType<A> {
+    fn key(&self) -> &NamespacedKey {
+        A::key()
+    }
+}
+
+impl<A: TypeKey + 'static> AttributeType for StandardAttributeType<A> {
+    fn dyn_clone(&self) -> Box<dyn AttributeType> {
         Box::new(self.clone())
     }
     fn insert_attribute(&self, entity: &mut EntityWorldMut, actor_key: &NamespacedKey) {
@@ -41,9 +48,9 @@ impl<A: 'static> Attribute for StandardAttribute<A> {
                 entity.resource::<PayloadManager>(),
                 entity.resource::<AssetServer>(),
                 entity.resource::<Assets<AttributeBase>>(),
-                format!("attribute_bases/{}", actor_key.path_string()),
+                actor_key,
             )
-            .and_then(|base| base.0.get(&self.key))
+            .and_then(|base| base.0.get(A::key()))
             {
                 Some(base) => Attributes::<Self>::new(*base),
                 None => Attributes::new_virtual(),
@@ -52,23 +59,22 @@ impl<A: 'static> Attribute for StandardAttribute<A> {
     }
 }
 
-impl<A: 'static> StandardAttribute<A> {
-    pub fn new(key: NamespacedKey) -> Box<dyn Attribute> {
+impl<A: TypeKey + 'static> StandardAttributeType<A> {
+    pub fn new() -> Box<dyn AttributeType> {
         Box::new(Self {
-            key,
             _marker: PhantomData,
         })
     }
 }
 
-#[derive(Component, Debug)]
-pub struct Attributes<A: Attribute> {
+#[derive(Clone, Component, Debug)]
+pub struct Attributes<A: AttributeType> {
     base: f32,
-    modifiers: HashSet<AttributeModifier>,
+    modifiers: HashMap<NamespacedKey, AttributeModifier>,
     _marker: PhantomData<fn() -> A>,
 }
 
-impl<A: Attribute> Attributes<A> {
+impl<A: AttributeType> Attributes<A> {
     pub fn new(base: f32) -> Self {
         Self {
             base,
@@ -90,7 +96,7 @@ impl<A: Attribute> Attributes<A> {
     }
     pub fn value_for(&self, mut base: f32) -> f32 {
         let mut multiplier = 1f32;
-        for modifier in &self.modifiers {
+        for modifier in self.modifiers.values() {
             match modifier.modification {
                 AttributeModification::AddValue(value) => base += value,
                 AttributeModification::AddMultipliedValue(multiplied_value) => {
@@ -100,9 +106,24 @@ impl<A: Attribute> Attributes<A> {
         }
         base * multiplier
     }
+    pub fn add_modifier(&mut self, modifier: AttributeModifier) {
+        self.modifiers.insert(modifier.key().clone(), modifier);
+    }
+    pub fn remove_modifier(&mut self, key: &NamespacedKey) {
+        self.modifiers.remove(key);
+    }
+    pub fn with_modifiers(
+        mut self,
+        modifiers: impl IntoIterator<Item = AttributeModifier>,
+    ) -> Self {
+        for modifier in modifiers.into_iter() {
+            self.add_modifier(modifier);
+        }
+        self
+    }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[identify(key)]
 pub struct AttributeModifier {
     key: NamespacedKey,
@@ -124,7 +145,7 @@ impl Keyed for AttributeModifier {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum AttributeModification {
     AddValue(f32),
     AddMultipliedValue(f32),
@@ -136,6 +157,12 @@ pub struct AttributeBase(HashMap<NamespacedKey, f32>);
 impl AttributeBase {
     pub fn new(base: HashMap<NamespacedKey, f32>) -> Self {
         Self(base)
+    }
+}
+
+impl Payload for AttributeBase {
+    fn payload_root() -> AssetPath<'static> {
+        "attribute_bases".into()
     }
 }
 
@@ -162,7 +189,7 @@ impl Template for AttributesTemplate {
     type Output = ();
     fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
         for attribute in context
-            .resource::<Assets<BoxedAttribute>>()
+            .resource::<Assets<BoxedAttributeType>>()
             .iter()
             .map(|(_id, attribute)| attribute.dyn_clone())
             .collect::<Box<_>>()
@@ -179,25 +206,53 @@ impl Template for AttributesTemplate {
 }
 
 #[doc(hidden)]
-pub enum MaxHealthAttribute {}
+#[derive(TypeKey)]
+#[type_key = "embers:damage_taken"]
+pub enum DamageTakenAttribute {}
 
-pub type MaxHealth = StandardAttribute<MaxHealthAttribute>;
+pub type DamageTaken = StandardAttributeType<DamageTakenAttribute>;
 
 #[doc(hidden)]
+#[derive(TypeKey)]
+#[type_key = "embers:knockback_taken"]
+pub enum KnockbackTakenAttribute {}
+
+pub type KnockbackTaken = StandardAttributeType<KnockbackTakenAttribute>;
+
+#[doc(hidden)]
+#[derive(TypeKey)]
+#[type_key = "embers:max_health"]
+pub enum MaxHealthAttribute {}
+
+pub type MaxHealth = StandardAttributeType<MaxHealthAttribute>;
+
+#[doc(hidden)]
+#[derive(TypeKey)]
+#[type_key = "embers:melee_damage"]
+pub enum MeleeDamageAttribute {}
+
+pub type MeleeDamage = StandardAttributeType<MeleeDamageAttribute>;
+
+#[doc(hidden)]
+#[derive(TypeKey)]
+#[type_key = "embers:movement_speed"]
 pub enum MovementSpeedAttribute {}
 
-pub type MovementSpeed = StandardAttribute<MovementSpeedAttribute>;
+pub type MovementSpeed = StandardAttributeType<MovementSpeedAttribute>;
 
 pub(super) fn plugin(app: &mut App) {
-    app.init_asset::<BoxedAttribute>()
+    app.init_asset::<BoxedAttributeType>()
         .init_asset::<AttributeBase>()
         .add_systems(
             PreStartup,
-            inject_keyed_embers_payload_batch::<BoxedAttribute>(
-                "attributes/{}",
+            inject_keyed_embers_payload_batch::<BoxedAttributeType>(
+                "{}",
                 [
-                    MaxHealth::new(NamespacedKey::new_embers("max_health")),
-                    MovementSpeed::new(NamespacedKey::new_embers("movement_speed")),
+                    DamageTaken::new(),
+                    KnockbackTaken::new(),
+                    MaxHealth::new(),
+                    MeleeDamage::new(),
+                    MovementSpeed::new(),
                 ],
             ),
         );

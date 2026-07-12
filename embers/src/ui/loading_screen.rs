@@ -1,10 +1,11 @@
 use super::{ActiveOverlay, GameState, text};
 use crate::dim::{ActiveDimension, Dimension, DimensionGenerationRequest};
-use crate::pld::meta::ReloadMetadataRequest;
-use crate::pld::{
+use crate::pld::def::RecompileDefinitionsRequest;
+use crate::pld::foundry::ui_image_node;
+use crate::pld::manager::{
     EvictPayloadScopeRequest, FetchPayloadScopeRequest, MountPayloadSourceRequest,
     PayloadFetchingComplete, PayloadScopeId, PayloadSourceId, RefetchPayloadRequest,
-    UnmountPayloadSourceRequest, ui_image_node,
+    UnmountPayloadSourceRequest,
 };
 use crate::utils::{Keyed, NamespacedKey};
 use bevy::app::App;
@@ -142,7 +143,7 @@ struct ReloadMetadataTask;
 
 impl LoadingTaskComponent for ReloadMetadataTask {
     fn task(&self) -> impl Command {
-        trigger(ReloadMetadataRequest)
+        trigger(RecompileDefinitionsRequest)
     }
 }
 

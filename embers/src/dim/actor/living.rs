@@ -5,12 +5,11 @@ pub mod player;
 
 use super::actor;
 use crate::dim::{Movements, MovementsConfig, PhysicsPreset};
-use crate::pld::PayloadTemplate;
-use crate::utils::NamespacedKey;
-use attributes::{Attributes, AttributesTemplate, MaxHealth};
+use crate::pld::foundry::PayloadTemplate;
+use crate::utils::{NamespacedKey, template_bundle};
+use attributes::{Attributes, AttributesTemplate, DamageTaken, KnockbackTaken, MaxHealth};
 use bevy::ecs::template::TemplateContext;
 use bevy::prelude::*;
-use bevy::scene::SceneFunction;
 use bevy_tnua::builtins::TnuaBuiltinKnockback;
 use bevy_tnua::prelude::*;
 
@@ -37,7 +36,7 @@ impl Template for MovementConfigTemplate {
 impl MovementConfigTemplate {
     fn new(actor_key: &NamespacedKey) -> Self {
         Self {
-            config: PayloadTemplate::path(format!("movement_configs/{}", actor_key.path_string())),
+            config: PayloadTemplate::path(actor_key),
         }
     }
 }
@@ -74,18 +73,11 @@ impl Template for HealthTemplate {
 }
 
 pub fn living_actor(key: &NamespacedKey, interactable: bool) -> impl Scene {
-    let key_cloned = key.clone();
-    let attributes = SceneFunction(move |_scene_context, resolved| {
-        resolved.push_bundle_template(AttributesTemplate::new(key_cloned.clone()));
-    });
-    let health = SceneFunction(move |_scene_context, resolved| {
-        resolved.push_bundle_template(HealthTemplate);
-    });
     bsn! {
         actor()
         { PhysicsPreset::LivingActor.physics(interactable) }
-        attributes
-        health
+        template_bundle(AttributesTemplate::new(key.clone()))
+        template_bundle(HealthTemplate)
         template(|_| Ok(TnuaController::<Movements>::default()))
         template_value(MovementConfigTemplate::new(key))
     }
@@ -95,29 +87,73 @@ pub fn living_actor(key: &NamespacedKey, interactable: bool) -> impl Scene {
 pub struct Damage {
     pub target: Entity,
     pub amount: f32,
-    pub knockback: Vec3,
+    pub knockback: DamageKnockback,
+    pub source: DamageSource,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum DamageKnockback {
+    Directional(Vec3),
+    Radial(f32),
+    None,
+}
+
+impl Default for DamageKnockback {
+    fn default() -> Self {
+        DamageKnockback::Radial(20.)
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct DamageSource {
+    pub origin: Vec3,
+    pub causing_entity: Option<Entity>,
+    pub direct_entity: Option<Entity>,
 }
 
 fn damage(
     mut damages: MessageReader<Damage>,
     mut commands: Commands,
-    mut living_actors: Query<(&mut Health, &mut TnuaController<Movements>)>,
+    mut living_actors: Query<(
+        &GlobalTransform,
+        &mut Health,
+        &Attributes<DamageTaken>,
+        &mut TnuaController<Movements>,
+        &Attributes<KnockbackTaken>,
+    )>,
 ) {
     for Damage {
         target,
         amount,
         knockback,
+        source:
+            DamageSource {
+                origin,
+                causing_entity: _,
+                direct_entity: _,
+            },
     } in damages.read()
     {
-        let Ok((mut health, mut controller)) = living_actors.get_mut(*target) else {
+        let Ok((transform, mut health, damage_taken, mut controller, knockback_taken)) =
+            living_actors.get_mut(*target)
+        else {
             warn!("Could not damage nonexistent living actor {}", target);
             continue;
         };
-        health.0 -= amount;
-        controller.action_interrupt(Movements::Knockback(TnuaBuiltinKnockback {
-            shove: *knockback,
-            force_forward: None,
-        }));
+        health.0 -= damage_taken.value_for(*amount).max(0.);
+        if let Some(knockback) = match *knockback {
+            DamageKnockback::Directional(vector) => Some(vector),
+            DamageKnockback::Radial(scalar) => {
+                Some(scalar * (transform.translation() - origin).normalize_or_zero())
+            }
+            DamageKnockback::None => None,
+        } {
+            controller.action_interrupt(Movements::Knockback(TnuaBuiltinKnockback {
+                shove: knockback_taken.value_for(knockback.length()).max(0.)
+                    * knockback.normalize_or_zero(),
+                force_forward: None,
+            }))
+        }
         /*commands.spawn_scene(bsn! {
             Particles3d()
         });*/

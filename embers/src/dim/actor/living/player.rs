@@ -13,7 +13,7 @@ use crate::dim::{
     Movements, update_action,
 };
 use crate::input::{DoubleClicks, InputButton, InteractionTrigger, just_pressed, pressed};
-use crate::pld::{PayloadManager, resolve_handle};
+use crate::pld::manager::{PayloadManager, resolve_handle};
 use crate::ui::dim::PlayerCamera;
 use crate::ui::{ActiveOverlay, GameState};
 use crate::utils::NamespacedKey;
@@ -145,10 +145,7 @@ fn process_input_entity_interactions_schedule() -> ScheduleConfigs<ScheduleSyste
                                     &payload_manager,
                                     &asset_server,
                                     &entity_interactions,
-                                    format!(
-                                        "entity_interactions/{}",
-                                        interaction_key.path_string()
-                                    ),
+                                    interaction_key,
                                 )
                             })
                             .map(|interaction| {
@@ -342,12 +339,7 @@ fn update_equipment_slot_actions(
                     initial_actions
                         .get(item_action_slot, trigger)
                         .and_then(|action| {
-                            resolve_handle(
-                                payload_manager,
-                                asset_server,
-                                item_actions,
-                                format!("item_actions/{}", action.path_string()),
-                            )
+                            resolve_handle(payload_manager, asset_server, item_actions, action)
                         })
                 {
                     slot_action_slots.set(trigger, next_action);

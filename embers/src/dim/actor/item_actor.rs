@@ -1,6 +1,6 @@
 use super::actor;
 use crate::dim::{Interactable, PhysicsPreset};
-use crate::pld::default_scene;
+use crate::pld::foundry::default_scene;
 use crate::utils::NamespacedKey;
 use avian3d::prelude::*;
 use bevy::prelude::*;

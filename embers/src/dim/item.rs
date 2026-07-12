@@ -1,24 +1,27 @@
 pub mod inv;
 
 use super::actor::living::player::Player;
+use super::actor::living::{Damage, DamageKnockback, DamageSource};
 use super::actor::primed_tnt::primed_tnt;
-use super::{Action, ActionSlots, CollisionLayer, exclude_source};
+use super::{Action, ActionSlots, CollisionLayer, EntityInteraction, exclude_source};
 use crate::input::InteractionTrigger;
-use crate::pld::{
-    Boxed, EMBERS_PAYLOAD_SOURCE_UUID, InjectedPayloads, PayloadManager, Payloads,
-    inject_embers_payload_batch, inject_keyed_embers_payload_batch, resolve_payload,
+use crate::pld::manager::{
+    EMBERS_PAYLOAD_SOURCE_UUID, InjectedPayloads, PayloadManager, inject_embers_payload_batch,
+    inject_keyed_embers_payload_batch, resolve_payload,
 };
+use crate::pld::{Boxed, BoxedPayloadMarker, Payload, PayloadApp, Payloads};
 use crate::utils::physics::section;
-use crate::utils::{DynCmp, DynPartialCmp, Keyed, NamespacedKey};
+use crate::utils::{DynCmp, DynPartialCmp, Keyed, NamespacedKey, TypeKey};
 use anyhow::Error;
 use avian3d::prelude::*;
+use bevy::asset::AssetPath;
 use bevy::ecs::system::{StaticSystemParam, SystemParam};
 use bevy::ecs::template::TemplateContext;
 use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
 use bevy::reflect::DynamicTypePath;
 use derive_where::derive_where;
-use embers_macros::identify;
+use embers_macros::{TypeKey, identify};
 use serde::{Deserialize, Serialize};
 use std::iter::once;
 use std::marker::PhantomData;
@@ -83,7 +86,7 @@ impl Template for ItemStackTemplate {
     type Output = ItemStack;
     fn build_template(&self, context: &mut TemplateContext) -> Result<Self::Output> {
         for component in context
-            .resource::<Assets<BoxedItemComponent>>()
+            .resource::<Assets<BoxedItemComponentType>>()
             .iter()
             .map(|(_id, component)| component.dyn_clone())
             .collect::<Box<[_]>>()
@@ -109,10 +112,10 @@ impl Default for StackCount {
     }
 }
 
-pub trait ItemComponent:
+pub trait ItemComponentType:
     DynamicTypePath + Keyed + for<'world> DynCmp<EntityRef<'world>> + Send + Sync + 'static
 {
-    fn dyn_clone(&self) -> Box<dyn ItemComponent>;
+    fn dyn_clone(&self) -> Box<dyn ItemComponentType>;
     fn clear_prototypes(&self, world: &mut DeferredWorld);
     fn inject_prototype(&self, world: &mut DeferredWorld, item: &NamespacedKey, prototype: Value);
     fn insert_prototype(&self, item_stack: &mut EntityWorldMut, item: &NamespacedKey);
@@ -120,28 +123,35 @@ pub trait ItemComponent:
 
 #[derive(TypePath)]
 #[doc(hidden)]
-pub enum DynItemComponent {}
+pub enum DynItemComponentType {}
 
-pub type BoxedItemComponent = Boxed<DynItemComponent, dyn ItemComponent>;
-
-#[derive_where(Clone)]
-#[derive(TypePath)]
-pub struct StandardItemComponent<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypePath> {
-    source_uuid: Uuid,
-    key: NamespacedKey,
-    _marker: PhantomData<fn() -> C>,
-}
-
-impl<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypePath> Keyed
-    for StandardItemComponent<C>
-{
-    fn key(&self) -> &NamespacedKey {
-        &self.key
+impl BoxedPayloadMarker for DynItemComponentType {
+    fn payload_root() -> AssetPath<'static> {
+        "item_components".into()
     }
 }
 
-impl<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypePath>
-    DynPartialCmp<EntityRef<'_>, EntityRef<'_>> for StandardItemComponent<C>
+pub type BoxedItemComponentType = Boxed<DynItemComponentType, dyn ItemComponentType>;
+
+#[derive_where(Clone)]
+#[derive(TypePath)]
+pub struct StandardItemComponentType<
+    C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypeKey + TypePath,
+> {
+    source_uuid: Uuid,
+    _marker: PhantomData<fn() -> C>,
+}
+
+impl<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypeKey + TypePath> Keyed
+    for StandardItemComponentType<C>
+{
+    fn key(&self) -> &NamespacedKey {
+        C::key()
+    }
+}
+
+impl<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypeKey + TypePath>
+    DynPartialCmp<EntityRef<'_>, EntityRef<'_>> for StandardItemComponentType<C>
 {
     fn dyn_eq(&self, lhs: EntityRef<'_>, rhs: EntityRef<'_>) -> bool {
         match (lhs.get::<C>(), rhs.get::<C>()) {
@@ -152,29 +162,30 @@ impl<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypePath>
     }
 }
 
-impl<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypePath> DynCmp<EntityRef<'_>>
-    for StandardItemComponent<C>
+impl<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypeKey + TypePath>
+    DynCmp<EntityRef<'_>> for StandardItemComponentType<C>
 {
 }
 
-impl<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypePath> StandardItemComponent<C> {
-    pub fn new(source_uuid: Uuid, key: NamespacedKey) -> BoxedItemComponent {
-        BoxedItemComponent::new_boxed(Box::new(Self {
+impl<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypeKey + TypePath>
+    StandardItemComponentType<C>
+{
+    pub fn new(source_uuid: Uuid) -> BoxedItemComponentType {
+        BoxedItemComponentType::new_boxed(Box::new(Self {
             source_uuid,
-            key,
             _marker: PhantomData,
         }))
     }
     #[inline]
-    pub fn new_embers(key: NamespacedKey) -> BoxedItemComponent {
-        Self::new(EMBERS_PAYLOAD_SOURCE_UUID.clone(), key)
+    pub fn new_embers() -> BoxedItemComponentType {
+        Self::new(EMBERS_PAYLOAD_SOURCE_UUID.clone())
     }
 }
 
-impl<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypePath> ItemComponent
-    for StandardItemComponent<C>
+impl<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypeKey + TypePath> ItemComponentType
+    for StandardItemComponentType<C>
 {
-    fn dyn_clone(&self) -> Box<dyn ItemComponent> {
+    fn dyn_clone(&self) -> Box<dyn ItemComponentType> {
         Box::new(self.clone())
     }
     fn clear_prototypes(&self, world: &mut DeferredWorld) {
@@ -202,7 +213,7 @@ impl<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypePath> ItemCompo
             .inject(
                 &mut injected_payloads.get_mut::<InjectedPayloads>().unwrap(),
                 self.source_uuid,
-                format!("item_component_prototypes/{}", item.path_string()),
+                item,
                 ItemComponentPrototype(C::deserialize(value).unwrap()),
             );
     }
@@ -211,7 +222,7 @@ impl<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypePath> ItemCompo
             item_stack.resource::<PayloadManager>(),
             item_stack.resource::<AssetServer>(),
             item_stack.resource::<Assets<ItemComponentPrototype<C>>>(),
-            format!("item_component_prototypes/{}", item.path_string()),
+            item,
         ) {
             item_stack.insert(prototype.clone());
         }
@@ -219,10 +230,19 @@ impl<C: Clone + Component + for<'de> Deserialize<'de> + Eq + TypePath> ItemCompo
 }
 
 #[derive(Asset, TypePath)]
-pub struct ItemComponentPrototype<C: Component + TypePath>(pub C);
+pub struct ItemComponentPrototype<C: Component + TypeKey + TypePath>(pub C);
 
-#[derive(Clone, Component, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, TypePath)]
+impl<C: Component + TypeKey + TypePath> Payload for ItemComponentPrototype<C> {
+    fn payload_root() -> AssetPath<'static> {
+        AssetPath::from("item_component_prototypes").resolve(&C::key().into())
+    }
+}
+
+#[derive(
+    Clone, Component, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, TypeKey, TypePath,
+)]
 #[require(ItemStack)]
+#[type_key = "embers:enchantments"]
 pub struct Enchantments();
 
 impl Default for Enchantments {
@@ -231,8 +251,11 @@ impl Default for Enchantments {
     }
 }
 
-#[derive(Clone, Component, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, TypePath)]
+#[derive(
+    Clone, Component, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, TypeKey, TypePath,
+)]
 #[require(ItemStack)]
+#[type_key = "embers:initial_actions"]
 pub struct InitialItemActions {
     hands_click: Option<NamespacedKey>,
     hands_double_click: Option<NamespacedKey>,
@@ -255,9 +278,12 @@ impl InitialItemActions {
     }
 }
 
-#[derive(Clone, Component, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, TypePath)]
+#[derive(
+    Clone, Component, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, TypeKey, TypePath,
+)]
 #[require(ItemStack)]
 #[serde(transparent)]
+#[type_key = "embers:max_stack_size"]
 pub struct MaxStackSize(u8);
 
 impl Default for MaxStackSize {
@@ -266,13 +292,17 @@ impl Default for MaxStackSize {
     }
 }
 
-#[derive(Clone, Component, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, TypePath)]
+#[derive(
+    Clone, Component, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, TypeKey, TypePath,
+)]
 #[require(ItemStack)]
+#[type_key = "embers:ranged_ammo"]
 pub struct RangedAmmo();
 
-#[derive(Clone, Component, Debug, Deserialize, Serialize, TypePath)]
+#[derive(Clone, Component, Debug, Deserialize, Serialize, TypeKey, TypePath)]
 #[require(ItemStack)]
 #[serde(transparent)]
+#[type_key = "embers:weight"]
 pub struct Weight(f32);
 
 impl PartialEq for Weight {
@@ -334,14 +364,19 @@ impl<T: (Fn(NamespacedKey, Table) -> Result<ItemAction, Error>) + Send + Sync> I
 #[doc(hidden)]
 pub enum DynItemActionBuilder {}
 
+impl BoxedPayloadMarker for DynItemActionBuilder {
+    fn payload_root() -> AssetPath<'static> {
+        "item_action_builders".into()
+    }
+}
+
 pub type BoxedItemActionBuilder = Boxed<DynItemActionBuilder, dyn ItemActionBuilder>;
 
 #[derive(SystemParam)]
 pub struct ItemActionEnvironment<'w, 's> {
     commands: Commands<'w, 's>,
     spatial_query: SpatialQuery<'w, 's>,
-    asset_server: Res<'w, AssetServer>,
-    player: Single<'w, 's, (Entity, &'static Transform), With<Player>>,
+    player: Single<'w, 's, (Entity, &'static GlobalTransform), With<Player>>,
 }
 
 pub type ItemActionSlots = ActionSlots<ItemAction>;
@@ -359,6 +394,12 @@ pub struct ItemAction {
     >,
     pub wield: ItemActionWield,
     duration: Duration,
+}
+
+impl Payload for ItemAction {
+    fn payload_root() -> AssetPath<'static> {
+        "item_actions".into()
+    }
 }
 
 impl ItemAction {
@@ -404,9 +445,6 @@ impl Action for ItemAction {
     fn duration(&self) -> Duration {
         self.duration
     }
-    fn path(key: &NamespacedKey) -> String {
-        format!("item_actions/{}", key.path_string())
-    }
 }
 
 pub fn item_stack(key: NamespacedKey) -> impl Scene {
@@ -416,12 +454,14 @@ pub fn item_stack(key: NamespacedKey) -> impl Scene {
 pub(super) fn plugin(app: &mut App) {
     app
         .init_asset::<ItemAction>()
+        .init_tags::<ItemAction>()
         .init_asset::<BoxedItemActionBuilder>()
-        .add_systems(PreStartup, inject_embers_payload_batch::<BoxedItemActionBuilder>("item_action_builders/{}", [
+        .add_systems(PreStartup, inject_embers_payload_batch::<BoxedItemActionBuilder>("{}", [
             (NamespacedKey::new_embers("melee"), Box::new(|key, config| {
                 #[derive(Deserialize)]
                 struct Melee {
                     damage: f32,
+                    knockback: f32,
                     arc_deg: f32,
                     range: f32,
                     wield: HandActionWield,
@@ -450,13 +490,21 @@ pub(super) fn plugin(app: &mut App) {
                     move |ItemActionEnvironment {
                             commands,
                             spatial_query,
-                            asset_server: _,
                             player,
-                        }, item, duration| {
+                        }, _item, duration| {
                             let (player, transform) = **player;
                             if duration.is_none() {
-                                for entity in spatial_query.shape_intersections(&collider, transform.translation, transform.rotation, &spatial_query_filter.clone().with_excluded_entities(once(player))) {
-                                    // todo
+                                for entity in spatial_query.shape_intersections(&collider, transform.translation(), transform.rotation(), &spatial_query_filter.clone().with_excluded_entities(once(player))) {
+                                    commands.write_message(Damage {
+                                        target: entity,
+                                        amount: action.damage,
+                                        knockback: DamageKnockback::Radial(action.knockback),
+                                        source: DamageSource {
+                                            origin: transform.translation(),
+                                            causing_entity: Some(player),
+                                            direct_entity: Some(player),
+                                        },
+                                    });
                                 }
                                 next_action.clone()
                             } else {
@@ -486,15 +534,14 @@ pub(super) fn plugin(app: &mut App) {
                 move |ItemActionEnvironment {
                         commands,
                         spatial_query: _,
-                        asset_server,
                         player,
                     }, _item| {
                         let (player, transform) = **player;
                         commands.spawn_scene(bsn! {
                             primed_tnt()
                             exclude_source(player)
-                            template_value({transform.clone()})
-                            LinearVelocity({transform.rotation * -Vec3::Z * velocity})
+                            template_value(Transform::from_isometry(transform.to_isometry()))
+                            LinearVelocity({transform.rotation() * -Vec3::Z * velocity})
                         });
                     },
                     move |_environment, _item, _duration| next_action.clone(),
@@ -520,7 +567,6 @@ pub(super) fn plugin(app: &mut App) {
                     move |ItemActionEnvironment {
                             commands,
                             spatial_query: _,
-                            asset_server,
                             player,
                         }, _item, duration| {
                             if duration.is_none() {
@@ -535,13 +581,13 @@ pub(super) fn plugin(app: &mut App) {
                 ))
             })),
         ]))
-        .init_asset::<BoxedItemComponent>()
-        .add_systems(PreStartup, inject_keyed_embers_payload_batch::<BoxedItemComponent>("item_components/{}", [
-            StandardItemComponent::<Enchantments>::new_embers(NamespacedKey::new_embers("enchantments")),
-            StandardItemComponent::<InitialItemActions>::new_embers(NamespacedKey::new_embers("initial_actions")),
-            StandardItemComponent::<MaxStackSize>::new_embers(NamespacedKey::new_embers("max_stack_size")),
-            StandardItemComponent::<RangedAmmo>::new_embers(NamespacedKey::new_embers("ranged_ammo")),
-            StandardItemComponent::<Weight>::new_embers(NamespacedKey::new_embers("weight")),
+        .init_asset::<BoxedItemComponentType>()
+        .add_systems(PreStartup, inject_keyed_embers_payload_batch::<BoxedItemComponentType>("{}", [
+            StandardItemComponentType::<Enchantments>::new_embers(),
+            StandardItemComponentType::<InitialItemActions>::new_embers(),
+            StandardItemComponentType::<MaxStackSize>::new_embers(),
+            StandardItemComponentType::<RangedAmmo>::new_embers(),
+            StandardItemComponentType::<Weight>::new_embers(),
         ]))
         .init_asset::<ItemComponentPrototype<Enchantments>>()
         .init_asset::<ItemComponentPrototype<InitialItemActions>>()

@@ -23,11 +23,11 @@ strip = "debuginfo"
 [workspace.dependencies]
 winresource = "0.1"
 avian3d = "0.7"
-bevy = { version = "0.19", features = [] }
+bevy = { version = "0.19", features = ["bevy_settings"] }
 bevy_sprinkles = "0.3"
 bevy-tnua = "0.32"
 bevy-tnua-avian3d = "0.12"
-# bevy_voxel_world = "0.16"
+bevy_voxel_world = "0.17"
 winit = { version = "0.30", default-features = false }
 atomicow = "1.2"
 anyhow = "1.0"
@@ -35,13 +35,14 @@ delegate = "0.13"
 derive-where = "1.6"
 duplicate = "2.0"
 rand = "0.10"
-regex = "1.12"
+regex = "1.13"
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "2.0"
 toml = "1.1"
 uuid = { version = "1.23", features = ["v5"] }
 syn = { version = "2.0", features = ["full", "extra-traits"] }
 quote = "1.0"
+proc-macro-crate = "3.5"
 proc-macro2 = "1.0"
 
 [workspace.lints.clippy]

@@ -1,6 +1,8 @@
 use proc_macro::TokenStream;
+use proc_macro_crate::{FoundCrate, crate_name};
+use proc_macro2::Span;
 use quote::quote;
-use syn::{DeriveInput, Meta, parse_macro_input};
+use syn::{DeriveInput, Error, Expr, ExprLit, Ident, Lit, Meta, MetaNameValue, parse_macro_input};
 
 /// Implements `Eq`, `Hash`, and `PartialEq` for a struct
 /// based on a specific field that serves as its identity.
@@ -21,7 +23,7 @@ pub fn identify(attr: TokenStream, item: TokenStream) -> TokenStream {
             .unwrap();
             field_ident.expect("Expected an identifier")
         }
-        Meta::NameValue(_) => panic!("Expected an identifier"),
+        Meta::NameValue(_value) => panic!("Expected an identifier"),
     };
     let struct_name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
@@ -39,4 +41,51 @@ pub fn identify(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
     })
+}
+
+#[proc_macro_derive(TypeKey, attributes(type_key))]
+pub fn derive_type_key(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = &input.ident;
+    let mut type_key = None;
+    for attr in &input.attrs {
+        if attr.path().is_ident("type_key") {
+            if let Meta::NameValue(MetaNameValue {
+                value:
+                    Expr::Lit(ExprLit {
+                        lit: Lit::Str(lit_str),
+                        ..
+                    }),
+                ..
+            }) = &attr.meta
+            {
+                type_key = Some(lit_str.value());
+                break;
+            }
+        }
+    }
+    let Some(type_key) = type_key else {
+        return Error::new_spanned(name, "missing required attribute `type_key`")
+            .to_compile_error()
+            .into();
+    };
+    let embers = match crate_name("embers") {
+        Ok(FoundCrate::Itself) => quote! { crate },
+        Ok(FoundCrate::Name(name)) => {
+            let ident = Ident::new(&name, Span::call_site());
+            quote! { ::#ident }
+        }
+        Err(_error) => quote! { ::embers },
+    };
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let expanded = quote! {
+        impl #impl_generics #embers::utils::TypeKey for #name #ty_generics #where_clause {
+            fn key() -> &'static #embers::utils::NamespacedKey {
+                static KEY: std::sync::LazyLock<#embers::utils::NamespacedKey> =
+                    std::sync::LazyLock::new(|| #type_key.parse::<#embers::utils::NamespacedKey>().unwrap());
+                &*KEY
+            }
+        }
+    };
+    TokenStream::from(expanded)
 }
