@@ -1,0 +1,15 @@
+* text=auto
+
+*.meta text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.wgsl text eol=lf
+*.wesl text eol=lf
+
+*.sln text eol=crlf
+
+*.glb binary
+*.ico binary
+*.jpg binary
+*.png binary
+*.ttf binary
